@@ -592,7 +592,7 @@ bool check_RTSP_stream(const std::string& rtspUrl) {
     }
 
     if (0 != box_ping4(rtspUrl.c_str(), 4)) {
-        LOG_M_D(MQTT_CLIENT, "network to %s is down");
+        LOG_M_E(MQTT_CLIENT, "network to %s is down", rtspUrl.c_str());
         return false;
     }
 
@@ -603,7 +603,7 @@ bool check_RTSP_stream(const std::string& rtspUrl) {
     }
 
     if (avformat_open_input(&formatContext, rtspUrl.c_str(), nullptr, nullptr) < 0) {
-        LOG_M_E(MQTT_CLIENT, "Failed to open RTSP stream: ", rtspUrl);
+        LOG_M_E(MQTT_CLIENT, "Failed to open RTSP stream: %s", rtspUrl.c_str());
         return false;
     }
 
@@ -874,7 +874,6 @@ static void OnDelAlgoTaskInfo(AX_U32 id) {
 
         // 更新配置
         CBoxMediaParser::GetInstance()->SetMediasMap(mediasMap);
-
 
         root["result"] = 0;
         root["msg"] = "操作成功";
@@ -2016,7 +2015,7 @@ AX_BOOL MqttClient::Start(AX_VOID) {
 
         for (size_t i = 0; i < mediasMap.size(); i++) {
             if (mediasMap[i].taskInfo.nTaskStatus == 1) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
                 StartPreview(i);
 
