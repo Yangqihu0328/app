@@ -1,0 +1,8 @@
+Package: aibox
+Version: 1.0.1
+Section: free
+Priority: optional
+Architecture: arm64
+Maintainer: 187205342@qq.com
+Provides: yunji
+Description: yun ji ai box

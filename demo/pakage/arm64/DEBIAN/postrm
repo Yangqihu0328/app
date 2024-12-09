@@ -1,0 +1,12 @@
+#!/bin/sh
+
+echo "remove yj-aibox-app"
+
+systemctl stop yj-aibox
+systemctl disable yj-aibox
+
+systemctl stop yj-mediaserver
+systemctl disable yj-mediaserver
+
+rm -rf /opt/aibox
+rm -f /etc/systemd/system/yj-*
