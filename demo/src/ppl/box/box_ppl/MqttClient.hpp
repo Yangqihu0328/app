@@ -361,6 +361,8 @@ protected:
 	std::unique_ptr<CAXLockQ<QUEUE_T>> local_jpeg_queue_;
 
 	std::string local_topic_;
+
+    AX_BOOL cloud_enable_{AX_FALSE};
     std::string cloud_topic_;
 
     CAXThread local_work_thread_;

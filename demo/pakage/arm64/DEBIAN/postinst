@@ -1,0 +1,9 @@
+#!/bin/sh
+
+echo "yj-aibox-app installing"
+
+systemctl enable yj-aibox
+systemctl start yj-aibox
+
+systemctl enable yj-mediaserver
+systemctl start yj-mediaserver
