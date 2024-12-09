@@ -125,46 +125,44 @@ public:
 
     DETECT_RESULT_T HandleDetectPerson(AX_S32 nGrp, const DETECT_RESULT_T& result) {
         DETECT_RESULT_T new_result = result;
-        DETECT_RESULT_T last_result = m_mapRlts[nGrp];
+        // DETECT_RESULT_T last_result = m_mapRlts[nGrp];
 
-        if (result.nCount != last_result.nCount) {
-            new_result.result_diff = AX_TRUE;
-        }
+        // if (result.nCount != last_result.nCount) {
+        //     new_result.result_diff = AX_TRUE;
+        // }
 
         return new_result;
     }
 
     DETECT_RESULT_T HandleDetectVehicle(AX_S32 nGrp, const DETECT_RESULT_T& result) {
         DETECT_RESULT_T new_result = result;
-        DETECT_RESULT_T last_result = m_mapRlts[nGrp];
+        // DETECT_RESULT_T last_result = m_mapRlts[nGrp];
 
-        if (result.nCount != last_result.nCount) {
-            new_result.result_diff = AX_TRUE;
-        }
+        // if (result.nCount != last_result.nCount) {
+        //     new_result.result_diff = AX_TRUE;
+        // }
 
         return new_result;
     }
 
     DETECT_RESULT_T HandleDetectFace(AX_S32 nGrp, const DETECT_RESULT_T& result) {
         DETECT_RESULT_T new_result = result;
-        DETECT_RESULT_T last_result = m_mapRlts[nGrp];
+        // DETECT_RESULT_T last_result = m_mapRlts[nGrp];
 
-        if (result.nCount != last_result.nCount) {
-            new_result.result_diff = AX_TRUE;
-        }
+        // if (result.nCount != last_result.nCount) {
+        //     new_result.result_diff = AX_TRUE;
+        // }
 
         return new_result;
     }
 
     DETECT_RESULT_T HandleDetectFire(AX_S32 nGrp, const DETECT_RESULT_T& result) {
         DETECT_RESULT_T new_result = result;
-        DETECT_RESULT_T last_result = m_mapRlts[nGrp];
+        // DETECT_RESULT_T last_result = m_mapRlts[nGrp];
 
-        if (result.nCount != last_result.nCount) {
-            new_result.result_diff = AX_TRUE;
-        } else {
-            
-        }
+        // if (result.nCount != last_result.nCount) {
+        //     new_result.result_diff = AX_TRUE;
+        // }
 
         return new_result;
     }

@@ -154,6 +154,7 @@ MQTT_CONFIG_T CBoxConfig::GetMqttConfig(AX_VOID) {
     conf.localPasswd = m_Ini.GetStringValue(SECT, "local passwd", "yunji123456");
     conf.localPort = m_Ini.GetIntValue(SECT, "local port", 1883);
 
+    conf.cloudEnable = (AX_BOOL)m_Ini.GetIntValue(SECT, "cloud enable", 0);
     conf.cloudTopic = m_Ini.GetStringValue(SECT, "cloud topic", "cloudMessage");
     conf.cloudHostname = m_Ini.GetStringValue(SECT, "cloud hostname", "127.0.0.1");
     conf.cloudName = m_Ini.GetStringValue(SECT, "cloud name", "admin");
