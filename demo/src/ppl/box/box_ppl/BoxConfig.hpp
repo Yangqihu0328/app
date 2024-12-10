@@ -63,6 +63,7 @@ typedef struct {
     std::string localPasswd;
     AX_S32 localPort;
 
+    AX_BOOL cloudEnable;
     std::string cloudTopic;
     std::string cloudHostname;
     std::string cloudName;
