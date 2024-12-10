@@ -32,34 +32,49 @@ typedef enum {
     DETECT_TYPE_TOTAL
 } DETECT_TYPE_E;
 
+struct _ax_point_t{
+    float x, y;
+};
+
+#define _FACE_POINT_LEN 5
+typedef struct {
+    struct FaceInfo {
+        /*
+        0到1之间的值，表示人脸质量，越高越好
+        */
+        float quality;
+        _ax_point_t points[_FACE_POINT_LEN];
+    } face_info;
+
+    struct PersonInfo {
+        /*
+        人体状态： 0：正面， 1：侧面，2：背面， 3：非人
+        */
+        int status;
+    } person_info;
+
+    struct VehicleInfo {
+        /*
+        车辆类型: 0：UNKNOWN 1：SEDAN 2：SUV 3：BUS 4：MICROBUS 5：TRUCK
+        */
+        int cartype;
+
+        /*
+        如果 b_is_track_plate = 1，则表示当前帧没有识别到车牌，返回的是历史上 track_id 上一次识别到的车牌结果
+        如果 b_is_track_plate = 0，且 len_plate_id > 0, 则表示当前帧识别到了车牌
+        如果 b_is_track_plate = 0，且 len_plate_id = 0, 则表示当前帧没有识别到车牌，且是历史上 track_id 也没有结果
+        */
+        int b_is_track_plate;
+        int len_plate_id;
+        int plate_id[16];
+    } vehicle_info;
+} AlgoData;
+
 typedef struct {
     DETECT_TYPE_E eType;
     AX_U64 nTrackId;
     AX_SKEL_RECT_T tBox;
-
-    /*
-    0到1之间的值，表示人脸质量，越高越好
-    */
-    AX_F32 quality;
-
-    /*
-    人体状态： 0：正面， 1：侧面，2：背面， 3：非人
-    */
-    AX_S32 status;
-
-    /*
-    车辆类型: 0：UNKNOWN 1：SEDAN 2：SUV 3：BUS 4：MICROBUS 5：TRUCK
-    */
-    AX_S32 cartype;
-    /*
-    如果 b_is_track_plate = 1，则表示当前帧没有识别到车牌，返回的是历史上 track_id 上一次识别到的车牌结果
-    如果 b_is_track_plate = 0，且 len_plate_id > 0, 则表示当前帧识别到了车牌
-    如果 b_is_track_plate = 0，且 len_plate_id = 0, 则表示当前帧没有识别到车牌，且是历史上 track_id 也没有结果
-    */
-    AX_S32 b_is_track_plate;
-    AX_S32 len_plate_id;
-    AX_S32 plate_id[16];
-
+    AlgoData data;
 } DETECT_RESULT_ITEM_T;
 
 typedef struct DETECT_RESULT_S {
@@ -86,97 +101,76 @@ class CDetectResult : public CAXSingleton<CDetectResult> {
     friend class CAXSingleton<CDetectResult>;
 
 public:
-    // 需要在这里进行组合
     AX_BOOL Set(AX_S32 nGrp, const DETECT_RESULT_T& result) {
         std::lock_guard<std::mutex> lck(m_mtx);
+        DETECT_RESULT_T new_result = result;
 
-        DETECT_RESULT_T new_result;
-        if (result.nAlgoType == DETECT_TYPE_E::DETECT_TYPE_PEOPLE) {
-            new_result = HandleDetectPerson(nGrp, result);
-        } else if (result.nAlgoType == DETECT_TYPE_E::DETECT_TYPE_VEHICLE) {
-            new_result = HandleDetectVehicle(nGrp, result);
-        } else if (result.nAlgoType == DETECT_TYPE_E::DETECT_TYPE_FACE) {
-            new_result = HandleDetectFace(nGrp, result);
-        } else if (result.nAlgoType == DETECT_TYPE_E::DETECT_TYPE_FIRE) {
-            new_result = HandleDetectFire(nGrp, result);
-        } else {
-            new_result = result;
+        auto& save_result = m_mapRlts[nGrp][result.nAlgoType];
+        auto& trackIdSet = m_trackIdSets[nGrp][result.nAlgoType];
+
+        //记录当前结果所有的track_id，并判断是否为新的track id
+        std::unordered_set<AX_S32> currentTrackIds;
+        for (const auto& newItem : result.item) {
+            if (trackIdSet.find(newItem.nTrackId) == trackIdSet.end()) {
+                new_result.result_diff = AX_TRUE;
+            }
+            trackIdSet.insert(newItem.nTrackId);
+            currentTrackIds.insert(newItem.nTrackId);
         }
 
-        m_mapRlts[nGrp] = new_result;
-
-        // 统计每个类型的总数量
-        for (AX_U32 i = 0; i < new_result.nCount; ++i) {
-            ++m_arrCount[new_result.nAlgoType];
+        // 遍历 trackIdSet，并删除那些不在当前 result 中的 trackId
+        std::unordered_set<AX_S32> toDelete;  // 临时集合，存储需要删除的 trackId
+        for (auto it = trackIdSet.begin(); it != trackIdSet.end();++it) {
+            AX_S32 trackId = *it;
+            // 如果这个 trackId 不在当前 result 中，标记为删除
+            if (currentTrackIds.find(trackId) == currentTrackIds.end()) {
+                toDelete.insert(trackId);
+            }
         }
 
+        while (trackIdSet.size() > track_length) {
+            // 删除不在当前 result 中的 trackId
+            if (!toDelete.empty()) {
+                // 先删除那些不在当前结果中的 trackId
+                AX_S32 trackIdToRemove = *toDelete.begin();
+                trackIdSet.erase(trackIdToRemove);
+                toDelete.erase(trackIdToRemove);  // 移除已删除的 trackId
+            } else {
+                auto it = trackIdSet.begin();
+                trackIdSet.erase(it);  // 删除最旧的 trackId
+            }
+        }
+
+        save_result = new_result;
         return AX_TRUE;
+
     }
 
     AX_BOOL Get(AX_S32 nGrp, DETECT_RESULT_T& result) {
         std::lock_guard<std::mutex> lck(m_mtx);
-        if (m_mapRlts.end() == m_mapRlts.find(nGrp)) {
+
+        auto grpIt = m_mapRlts.find(nGrp);
+        if (grpIt == m_mapRlts.end()) {
             return AX_FALSE;
         }
 
-        result = m_mapRlts[nGrp];
-        return AX_TRUE;
-    }
+        auto& grp_result = grpIt->second;
+        for (auto algoIt = grp_result.begin(); algoIt != grp_result.end(); ) {
+            if (algoIt->second.nAlgoType != DETECT_TYPE_TOTAL) {
+                result = algoIt->second;
 
-    DETECT_RESULT_T HandleDetectPerson(AX_S32 nGrp, const DETECT_RESULT_T& result) {
-        DETECT_RESULT_T new_result = result;
-        DETECT_RESULT_T last_result = m_mapRlts[nGrp];
-
-        if (result.nCount != last_result.nCount) {
-            new_result.result_diff = AX_TRUE;
+                algoIt = grp_result.erase(algoIt);
+                return AX_TRUE;
+            } else {
+                ++algoIt;
+            }
         }
 
-        return new_result;
-    }
-
-    DETECT_RESULT_T HandleDetectVehicle(AX_S32 nGrp, const DETECT_RESULT_T& result) {
-        DETECT_RESULT_T new_result = result;
-        DETECT_RESULT_T last_result = m_mapRlts[nGrp];
-
-        if (result.nCount != last_result.nCount) {
-            new_result.result_diff = AX_TRUE;
-        }
-
-        return new_result;
-    }
-
-    DETECT_RESULT_T HandleDetectFace(AX_S32 nGrp, const DETECT_RESULT_T& result) {
-        DETECT_RESULT_T new_result = result;
-        DETECT_RESULT_T last_result = m_mapRlts[nGrp];
-
-        if (result.nCount != last_result.nCount) {
-            new_result.result_diff = AX_TRUE;
-        }
-
-        return new_result;
-    }
-
-    DETECT_RESULT_T HandleDetectFire(AX_S32 nGrp, const DETECT_RESULT_T& result) {
-        DETECT_RESULT_T new_result = result;
-        DETECT_RESULT_T last_result = m_mapRlts[nGrp];
-
-        if (result.nCount != last_result.nCount) {
-            new_result.result_diff = AX_TRUE;
-        } else {
-            
-        }
-
-        return new_result;
-    }
-
-    AX_U64 GetTotalCount(DETECT_TYPE_E eType) {
-        std::lock_guard<std::mutex> lck(m_mtx);
-        return m_arrCount[eType];
+        return AX_FALSE;
     }
 
     AX_VOID Clear(AX_VOID) {
         std::lock_guard<std::mutex> lck(m_mtx);
-        memset(m_arrCount, 0, sizeof(m_arrCount));
         m_mapRlts.clear();
     }
 
@@ -185,8 +179,8 @@ protected:
     virtual ~CDetectResult(AX_VOID) = default;
 
 private:
+    AX_U32 track_length = 30;
     std::mutex m_mtx;
-    std::map<AX_S32, DETECT_RESULT_T> m_mapRlts;
-
-    AX_U64 m_arrCount[DETECT_TYPE_TOTAL] = {0};
+    std::map<AX_S32, std::map<AX_S32, DETECT_RESULT_T>> m_mapRlts;
+    std::map<AX_S32, std::map<AX_S32, std::unordered_set<AX_S32>>> m_trackIdSets;
 };

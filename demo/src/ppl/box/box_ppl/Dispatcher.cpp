@@ -33,7 +33,6 @@ AX_VOID CDispatcher::DispatchThread(AX_VOID* pArg) {
             if (0 == fbc.nMode) { /* if no compress, draw box because AX_IVPS_DrawRect not support FBC */
                 // 这个地方检测出来肯定会有结果
                 if (CDetectResult::GetInstance()->Get(axFrame.nGrp, fhvp)) {
-        
                     /* CPU draw rectange, needs virtual address */
                     if (0 == axFrame.stFrame.stVFrame.stVFrame.u64VirAddr[0]) {
                         axFrame.stFrame.stVFrame.stVFrame.u64VirAddr[0] =

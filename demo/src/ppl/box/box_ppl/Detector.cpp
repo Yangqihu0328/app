@@ -116,16 +116,14 @@ AX_VOID CDetector::WorkerThread(AX_U32 nGrd) {
                         item.eType = static_cast<DETECT_TYPE_E>(result.nAlgoType);
                         item.nTrackId = obj.track_id;
 
-                        item.quality = obj.face_info.quality;
-                        item.status = obj.person_info.status;
-                        item.cartype = obj.vehicle_info.cartype;
-                        item.b_is_track_plate = obj.vehicle_info.b_is_track_plate;
-                        item.len_plate_id = obj.vehicle_info.len_plate_id;
-                        memcpy(item.plate_id, obj.vehicle_info.plate_id, sizeof(item.plate_id));
+                        memcpy(&item.data.face_info, &obj.face_info, sizeof(item.data.face_info));
+                        memcpy(&item.data.person_info, &obj.person_info, sizeof(item.data.person_info));
+                        memcpy(&item.data.vehicle_info, &obj.vehicle_info, sizeof(item.data.vehicle_info));
 
                         // 提取边界框并校验宽度和高度
                         float x = obj.bbox.x;
                         float y = obj.bbox.y;
+
                         float w = obj.bbox.w;
                         float h = obj.bbox.h;
 
