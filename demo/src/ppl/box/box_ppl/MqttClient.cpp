@@ -22,6 +22,7 @@
 
 #include <thread>
 #include <chrono>
+#include <sstream>
 
 namespace boxconf {
 
@@ -34,6 +35,8 @@ namespace boxconf {
 #define ALARM_IMG_PATH "ZLMediaKit/www/alarm"
 
 #define AI_BOX_VERSION "1.0.4"
+
+const std::string SERVER_URL = "http://192.168.0.196:8010";
 
 using namespace std;
 using json = nlohmann::json;
@@ -51,6 +54,7 @@ static std::shared_ptr<MQTT::Client<IPStack, Countdown>> local_client_ = nullptr
 static std::string cloud_topic_;
 static std::shared_ptr<IPStack> cloud_ipstack_ = nullptr;
 static std::shared_ptr<MQTT::Client<IPStack, Countdown>> cloud_client_ = nullptr;
+static bool cloud_mqtt_connected_ = false;
 
 static bool isLogin = false;
 static int arrivedcount = 0;
@@ -71,28 +75,26 @@ static string GetExecPath(AX_VOID) {
     return strPath;
 }
 
-static int GetUID(std::string& uid) {
+static std::string GetUID() {
     std::ifstream temp_file("/proc/ax_proc/uid");
     if (!temp_file) {
         std::cerr << "Cannot open uid file" << std::endl;
-        return -1;
+        return "";
     }
 
     std::string temp_line;
     if (!std::getline(temp_file, temp_line)) {
         std::cerr << "Cannot read uid" << std::endl;
-        return -1;
+        return "";
     }
 
     size_t pos = temp_line.find(' ');
     if (pos != std::string::npos) {
         std::string result = temp_line.substr(pos + 1);
-        uid = std::move(result);
-    } else {
-        uid = std::move(temp_line);
+        return result;
     }
 
-    return 0;
+    return temp_line;
 }
 
 static int GetVersion(std::string& version) {
@@ -1614,6 +1616,274 @@ static AX_VOID removeJpgFile(AX_BOOL isDir, nlohmann::json fileUrls, bool local)
     printf("removeJpgFile ----\n");
 }
 
+static AX_VOID OnGetConnectionSettings(bool local) {
+    LOG_M_C(MQTT_CLIENT, "OnGetConnectionSettings ++++.");
+
+    MQTT_CONFIG_T mqttConfig = CBoxConfig::GetInstance()->GetMqttConfig();
+    
+    json child;
+    child["type"] = "getConnectionSettings";
+    child["connection"] = mqttConfig.address;
+    child["accessKey"] = mqttConfig.accessKey;
+    child["secretKey"] = mqttConfig.secretKey;
+
+    json root;
+    root["result"] = 0;
+    root["msg"] = "操作成功，服务正在重启，请稍候！";
+    root["data"] = child;
+
+    std::string payload = root.dump();
+    SendMsg(payload.c_str(), payload.size(), local);
+
+    system("/usr/bin/systemctl restart yj-mediaserver");
+    system("/usr/bin/systemctl restart yj-aibox");
+
+    LOG_M_C(MQTT_CLIENT, "OnGetConnectionSettings ----.");
+}
+
+static void MQTTCloudMessage(MQTT::MessageData& md) {
+    LOG_MM_D(MQTT_CLIENT,"MQTTCloudMessage ++++\n");
+
+    MQTT::Message &message = md.message;
+    LOG_MM_D(MQTT_CLIENT, "Message %d arrived: qos %d, retained %d, dup %d, packetid %d.",
+            ++arrivedcount, message.qos, message.retained, message.dup, message.id);
+    LOG_MM_D(MQTT_CLIENT, "Payload %.*s.", (int)message.payloadlen, (char*)message.payload);
+
+    std::string recv_msg((char *)message.payload, message.payloadlen);
+    LOG_M_C(MQTT_CLIENT, "=============================================================");
+    LOG_M_C(MQTT_CLIENT, "recv msg: %s", recv_msg.c_str());
+    LOG_M_C(MQTT_CLIENT, "=============================================================");
+
+    std::string type;
+    nlohmann::json jsonRes;
+    try {
+        jsonRes = nlohmann::json::parse(recv_msg);
+        type = jsonRes["type"];
+    } catch (const nlohmann::json::parse_error& e) {
+        std::cerr << "JSON parse error: " << e.what() << std::endl;
+        std::cerr << "Received message: " << recv_msg << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "An error occurred: " << e.what() << std::endl;
+    }
+
+    if (type == "rebootAiBox") { // 重启盒子
+        OnRebootAiBox(false);
+    } else if (type == "restartAppService") { // 重启应用服务
+        OnRestartAppService(false);
+    } else if (type == "syncSystemTime") { // 同步系统时间
+        AX_S32 year = jsonRes["year"];
+        AX_S32 month = jsonRes["month"];
+        AX_S32 day = jsonRes["day"];
+        AX_S32 hour = jsonRes["hour"];
+        AX_S32 minute = jsonRes["minute"];
+        AX_S32 second = jsonRes["second"];
+        OnSyncSystemTime(year, month, day, hour, minute, second, false);
+    } else if (type == "getMediaChannelList") { // 获取通道列表
+        OnGetMediaChannelList(false);
+    } else if (type == "setMediaChannelInfo") { // 设置通道信息
+        AX_U32 mediaId = jsonRes["mediaId"];
+        std::string mediaUrl = jsonRes["mediaUrl"];
+        std::string mediaName = jsonRes["mediaName"];
+        std::string mediaDesc = jsonRes["mediaDesc"];
+        OnSetMediaChannelInfo(mediaId, mediaUrl, mediaName, mediaDesc, false);
+    } else if (type == "delMediaChannelInfo") { // 删除通道信息
+        AX_U32 mediaId = jsonRes["mediaId"];
+        OnDelMediaChannelInfo(mediaId, false);
+    } else if (type == "getAiModelList") { // 算法模型列表
+        OnGetAiModelList(false);
+    } else if (type == "getAlgoTaskList") { // 算法任务列表
+        OnGetAlgoTaskList(false);
+    } else if (type == "setAlgoTaskInfo") { // 配置算法任务
+        AX_U32 mediaId = jsonRes["mediaId"];
+        std::string pushUrl  = jsonRes["taskPushUrl"];
+        std::string taskName = jsonRes["taskName"];
+        std::string taskDesc = jsonRes["taskDesc"];
+
+        std::vector<AX_U32> vAlgo;
+        nlohmann::json algos = jsonRes["taskAlgos"];
+        if (algos.is_array()) {
+            for (auto algo : algos) {
+                vAlgo.push_back((AX_U32)algo);
+            }
+        }
+
+        OnSetAlgoTaskInfo(mediaId, pushUrl, taskName, taskDesc, vAlgo, false);
+    } else if (type == "delAlgoTaskInfo") { // 删除算法任务
+        AX_U32 mediaId = jsonRes["mediaId"];
+        OnDelAlgoTaskInfo(mediaId, false);
+    } else if (type == "algoTaskControl") { // 控制算法启停
+        AX_U32 mediaId = jsonRes["mediaId"];
+        AX_U32 controlCommand = jsonRes["controlCommand"];
+        OnAlgoTaskControl(mediaId, controlCommand, false);
+    } else if (type == "algoTaskSnapshot") { // 参考标底图
+        AX_U32 mediaId = jsonRes["mediaId"];
+        OnAlgoTaskSnapshot(mediaId, false);
+    } else if (type == "getAiBoxNetwork") { // 盒子网络信息
+        OnGetAiBoxNetwork(false);
+    } else if (type == "setAiBoxNetwork") { // 设置盒子网络
+        std::string name = jsonRes["name"];
+        AX_U32 dhcp = jsonRes["dhcp"];
+        std::string address = jsonRes["address"];
+        std::string gateway = jsonRes["gateway"];
+        std::string mask = jsonRes["mask"];
+        std::string dns = jsonRes["dns"];
+        OnSetAiBoxNetwork(name, dhcp, address, gateway, mask, dns, false);
+    } else if (type == "playAudio") { // 播放告警音频
+        AX_U32 status = jsonRes["status"];
+        OnAlarmControl(AX_TRUE, status, false);
+    } else if (type == "showWindow") { // 显示告警弹窗
+        AX_U32 status = jsonRes["status"];
+        OnAlarmControl(AX_FALSE, status, false);
+    } else if (type == "getAlarmStatus") { // 获取告警配置
+        OnGetAlarmStatus(false);
+    } else if (type == "clearAllJpg") { // 删除所有图片
+        removeJpgFile(AX_TRUE, NULL, false);
+    } else if (type == "clearJpgFiles") { // 删除指定图片
+        nlohmann::json fileUrls = jsonRes["fileUrls"];
+        removeJpgFile(AX_FALSE, fileUrls, false);
+    }
+
+    LOG_MM_D(MQTT_CLIENT,"MQTTCloudMessage ----\n");
+}
+
+static bool ConnectCloudMQTT() {
+    LOG_M_C(MQTT_CLIENT, "OnSetConnectionSettings ++++.");
+
+    MQTT_CONFIG_T mqttConfig = CBoxConfig::GetInstance()->GetMqttConfig();
+
+    AX_S32 port;
+    std::string hostname;
+    std::stringstream ss(mqttConfig.address);
+    if (std::getline(ss, hostname, ':')) {
+        if (ss >> port) {
+            std::string host = SERVER_URL;
+            std::string api = "/system/admin/sysTenantAuths/details";
+            std::string params = "?accessKey=" + mqttConfig.accessKey + "&secretKey=" + mqttConfig.secretKey;
+            std::string url = host + api + params;
+            LOG_M_C(MQTT_CLIENT, "request url: %s", url.c_str());
+            std::string res = BoxHttpRequest::Send("get", url, "Content-Type: application/json;", "", 5000);
+            LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
+
+            bool success = AX_FALSE;
+            nlohmann::json jsonRes;
+            try {
+                jsonRes = nlohmann::json::parse(res);
+                success = jsonRes["success"];
+            } catch (const nlohmann::json::parse_error& e) {
+                std::cerr << "JSON parse error: " << e.what() << std::endl;
+                std::cerr << "Received message: " << res << std::endl;
+                return false;
+            } catch (const std::exception& e) {
+                std::cerr << "An error occurred: " << e.what() << std::endl;
+                return false;
+            }
+
+            if (success) {
+                cloud_topic_ = GetUID();
+                cloud_ipstack_ = std::make_unique<IPStack>();
+                cloud_client_ = std::make_unique<MQTT::Client<IPStack, Countdown>>(*cloud_ipstack_);
+
+                LOG_M_C(MQTT_CLIENT, "Mqtt Version is %d, cloud topic is %s", mqttConfig.version, cloud_topic_.c_str());
+                LOG_M_C(MQTT_CLIENT, "Connecting to %s:%d", hostname.c_str(), port);
+
+                int rc = cloud_ipstack_->connect(hostname.c_str(), port);
+                if (rc != 0) {
+                    LOG_M_E(MQTT_CLIENT, "connect cloud mqtt fail, rc is %d", rc);
+                    return false;
+                } else {
+                    MQTTPacket_connectData data = MQTTPacket_connectData_initializer;
+                    data.MQTTVersion = mqttConfig.version;
+                    data.clientID.cstring = mqttConfig.username.c_str();
+                    data.username.cstring = mqttConfig.username.c_str();
+                    data.password.cstring = mqttConfig.userpasswd.c_str();
+                    rc = cloud_client_->connect(data);
+                    if (rc != 0) {
+                        LOG_M_E(MQTT_CLIENT, "connect cloud mqtt fail, rc is %d\n", rc);
+                        return false;
+                    } else {
+                        LOG_M_C(MQTT_CLIENT, "cloud mqtt connected sucess");
+                        rc = cloud_client_->subscribe(cloud_topic_.c_str(), MQTT::QOS0, MQTTCloudMessage);
+                        if (rc != 0) {
+                            LOG_M_E(MQTT_CLIENT, "cloud mqtt subscribe failed, rc is %d\n", rc);
+                            return false;
+                        }
+
+                        LOG_M_C(MQTT_CLIENT, "cloud mqtt subscribe [%s] success", cloud_topic_.c_str());
+                    }
+                }
+
+                AX_CHAR szIP[64] = {0};
+                int ret = GetIP(szIP);
+                if (ret == -1) {
+                    LOG_MM_D(MQTT_CLIENT, "GetIP fail.");
+                }
+
+                MemoryInfo memInfo = {0};
+                ret = GetMemoryInfo(memInfo);
+                if (ret == -1) {
+                    LOG_MM_D(MQTT_CLIENT, "GetMemoryInfo fail.");
+                }
+
+                FlashInfo falsh_info = {0};
+                ret = GetDiskUsage("/", falsh_info);
+                if (ret == -1) {
+                    LOG_MM_D(MQTT_CLIENT, "GetDiskUsage fail.");
+                }
+
+                std::string version;
+                GetVersion(version);
+
+                std::string tenantId = jsonRes["content"]["tenantId"];
+
+                // 云端设备注册
+                json message = {
+                    {"authorizationStatus", "已授权"},
+                    {"deviceIp", szIP},
+                    {"deviceSymbol", cloud_topic_},
+                    {"memory", memInfo.totalMem},
+                    {"softwareVersion", AI_BOX_VERSION},
+                    {"status", "正常"},
+                    {"storage", falsh_info.total},
+                    {"systemVersion", version},
+                    {"tenantId", tenantId},
+                };
+
+                auto params = message.dump();
+                std::string res = BoxHttpRequest::Send("post", SERVER_URL + "/devices/admin/deviceInfo/save",
+                                                       "Content-Type: application/json;", params, 5000);
+                LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
+
+                cloud_mqtt_connected_ = true;
+
+                return true;
+            }
+        }
+    }
+
+    LOG_M_C(MQTT_CLIENT, "OnSetConnectionSettings ----.");
+
+    return false;
+}
+
+static AX_VOID OnSetConnectionSettings(const std::string &address, const std::string &accessKey, const std::string &secretKey, bool local) {
+    LOG_M_C(MQTT_CLIENT, "OnSetConnectionSettings ++++.");
+
+    AX_BOOL ret = CBoxConfig::GetInstance()->SetMqttConfig(address, accessKey, secretKey);
+
+    json child;
+    child["type"] = "setConnectionSettings";
+
+    json root;
+    root["result"] = ret == AX_TRUE ? 0 : -1;
+    root["msg"] = ret == AX_TRUE ? "操作成功" : "操作失败";
+    root["data"] = child;
+
+    std::string payload = root.dump();
+    SendMsg(payload.c_str(), payload.size(), local);
+
+    LOG_M_C(MQTT_CLIENT, "OnSetConnectionSettings ----.");
+}
+
 static void MQTTLocalMessage(MQTT::MessageData& md) {
     LOG_MM_D(MQTT_CLIENT,"MQTTLocalMessage ++++\n");
 
@@ -1743,114 +2013,16 @@ static void MQTTLocalMessage(MQTT::MessageData& md) {
     } else if (type == "clearJpgFiles") { // 删除指定图片
         nlohmann::json fileUrls = jsonRes["fileUrls"];
         removeJpgFile(AX_FALSE, fileUrls, true);
+    } else if (type == "getConnectionSettings") {
+        OnGetConnectionSettings(true);
+    } else if (type == "setConnectionSettings") {
+        std::string address = jsonRes["connection"];
+        std::string accessKey = jsonRes["accessKey"];
+        std::string secretKey = jsonRes["secretKey"];
+        OnSetConnectionSettings(address, accessKey, secretKey, true);
     }
 
     LOG_MM_D(MQTT_CLIENT,"MQTTLocalMessage ----\n");
-}
-
-static void MQTTCloudMessage(MQTT::MessageData& md) {
-    LOG_MM_D(MQTT_CLIENT,"MQTTCloudMessage ++++\n");
-
-    MQTT::Message &message = md.message;
-    LOG_MM_D(MQTT_CLIENT, "Message %d arrived: qos %d, retained %d, dup %d, packetid %d.",
-            ++arrivedcount, message.qos, message.retained, message.dup, message.id);
-    LOG_MM_D(MQTT_CLIENT, "Payload %.*s.", (int)message.payloadlen, (char*)message.payload);
-
-    std::string recv_msg((char *)message.payload, message.payloadlen);
-    LOG_M_C(MQTT_CLIENT, "=============================================================");
-    LOG_M_C(MQTT_CLIENT, "recv msg: %s", recv_msg.c_str());
-    LOG_M_C(MQTT_CLIENT, "=============================================================");
-
-    std::string type;
-    nlohmann::json jsonRes;
-    try {
-        jsonRes = nlohmann::json::parse(recv_msg);
-        type = jsonRes["type"];
-    } catch (const nlohmann::json::parse_error& e) {
-        std::cerr << "JSON parse error: " << e.what() << std::endl;
-        std::cerr << "Received message: " << recv_msg << std::endl;
-    } catch (const std::exception& e) {
-        std::cerr << "An error occurred: " << e.what() << std::endl;
-    }
-
-    if (type == "rebootAiBox") { // 重启盒子
-        OnRebootAiBox(false);
-    } else if (type == "restartAppService") { // 重启应用服务
-        OnRestartAppService(false);
-    } else if (type == "syncSystemTime") { // 同步系统时间
-        AX_S32 year = jsonRes["year"];
-        AX_S32 month = jsonRes["month"];
-        AX_S32 day = jsonRes["day"];
-        AX_S32 hour = jsonRes["hour"];
-        AX_S32 minute = jsonRes["minute"];
-        AX_S32 second = jsonRes["second"];
-        OnSyncSystemTime(year, month, day, hour, minute, second, false);
-    } else if (type == "getMediaChannelList") { // 获取通道列表
-        OnGetMediaChannelList(false);
-    } else if (type == "setMediaChannelInfo") { // 设置通道信息
-        AX_U32 mediaId = jsonRes["mediaId"];
-        std::string mediaUrl = jsonRes["mediaUrl"];
-        std::string mediaName = jsonRes["mediaName"];
-        std::string mediaDesc = jsonRes["mediaDesc"];
-        OnSetMediaChannelInfo(mediaId, mediaUrl, mediaName, mediaDesc, false);
-    } else if (type == "delMediaChannelInfo") { // 删除通道信息
-        AX_U32 mediaId = jsonRes["mediaId"];
-        OnDelMediaChannelInfo(mediaId, false);
-    } else if (type == "getAiModelList") { // 算法模型列表
-        OnGetAiModelList(false);
-    } else if (type == "getAlgoTaskList") { // 算法任务列表
-        OnGetAlgoTaskList(false);
-    } else if (type == "setAlgoTaskInfo") { // 配置算法任务
-        AX_U32 mediaId = jsonRes["mediaId"];
-        std::string pushUrl  = jsonRes["taskPushUrl"];
-        std::string taskName = jsonRes["taskName"];
-        std::string taskDesc = jsonRes["taskDesc"];
-
-        std::vector<AX_U32> vAlgo;
-        nlohmann::json algos = jsonRes["taskAlgos"];
-        if (algos.is_array()) {
-            for (auto algo : algos) {
-                vAlgo.push_back((AX_U32)algo);
-            }
-        }
-
-        OnSetAlgoTaskInfo(mediaId, pushUrl, taskName, taskDesc, vAlgo, false);
-    } else if (type == "delAlgoTaskInfo") { // 删除算法任务
-        AX_U32 mediaId = jsonRes["mediaId"];
-        OnDelAlgoTaskInfo(mediaId, false);
-    } else if (type == "algoTaskControl") { // 控制算法启停
-        AX_U32 mediaId = jsonRes["mediaId"];
-        AX_U32 controlCommand = jsonRes["controlCommand"];
-        OnAlgoTaskControl(mediaId, controlCommand, false);
-    } else if (type == "algoTaskSnapshot") { // 参考标底图
-        AX_U32 mediaId = jsonRes["mediaId"];
-        OnAlgoTaskSnapshot(mediaId, false);
-    } else if (type == "getAiBoxNetwork") { // 盒子网络信息
-        OnGetAiBoxNetwork(false);
-    } else if (type == "setAiBoxNetwork") { // 设置盒子网络
-        std::string name = jsonRes["name"];
-        AX_U32 dhcp = jsonRes["dhcp"];
-        std::string address = jsonRes["address"];
-        std::string gateway = jsonRes["gateway"];
-        std::string mask = jsonRes["mask"];
-        std::string dns = jsonRes["dns"];
-        OnSetAiBoxNetwork(name, dhcp, address, gateway, mask, dns, false);
-    } else if (type == "playAudio") { // 播放告警音频
-        AX_U32 status = jsonRes["status"];
-        OnAlarmControl(AX_TRUE, status, false);
-    } else if (type == "showWindow") { // 显示告警弹窗
-        AX_U32 status = jsonRes["status"];
-        OnAlarmControl(AX_FALSE, status, false);
-    } else if (type == "getAlarmStatus") { // 获取告警配置
-        OnGetAlarmStatus(false);
-    } else if (type == "clearAllJpg") { // 删除所有图片
-        removeJpgFile(AX_TRUE, NULL, false);
-    } else if (type == "clearJpgFiles") { // 删除指定图片
-        nlohmann::json fileUrls = jsonRes["fileUrls"];
-        removeJpgFile(AX_FALSE, fileUrls, false);
-    }
-
-    LOG_MM_D(MQTT_CLIENT,"MQTTCloudMessage ----\n");
 }
 
 //回调不能出现耗时过久
@@ -1885,7 +2057,6 @@ AX_BOOL MqttClient::OnRecvData(OBS_TARGET_TYPE_E eTarget, AX_U32 nGrp, AX_U32 nC
     return AX_TRUE;
 }
 
-
 AX_BOOL MqttClient::Init(MQTT_CONFIG_T &mqtt_config) {
     // 实现加锁队列，主要是多线程
     local_jpeg_queue_ = std::make_unique<CAXLockQ<QUEUE_T>>();
@@ -1896,23 +2067,23 @@ AX_BOOL MqttClient::Init(MQTT_CONFIG_T &mqtt_config) {
         local_jpeg_queue_->SetCapacity(32);
     }
 
-    local_topic_ = mqtt_config.localTopic;
+    local_topic_ = mqtt_config.topic;
     local_ipstack_ = std::make_unique<IPStack>();
     local_client_ = std::make_unique<MQTT::Client<IPStack, Countdown>>(*local_ipstack_);
 
     LOG_M_C(MQTT_CLIENT, "Mqtt Version is %d, local topic is %s", mqtt_config.version, local_topic_.c_str());
-    LOG_M_C(MQTT_CLIENT, "Connecting to %s:%d", mqtt_config.localHostname.c_str(), mqtt_config.localPort);
+    LOG_M_C(MQTT_CLIENT, "Connecting to %s:%d", mqtt_config.hostname.c_str(), mqtt_config.port);
 
-    int rc = local_ipstack_->connect(mqtt_config.localHostname.c_str(), mqtt_config.localPort);
+    int rc = local_ipstack_->connect(mqtt_config.hostname.c_str(), mqtt_config.port);
     if (rc != 0) {
         LOG_M_E(MQTT_CLIENT, "connect local mqtt fail, rc is %d", rc);
         return AX_FALSE;
     } else {
         MQTTPacket_connectData data = MQTTPacket_connectData_initializer;
         data.MQTTVersion = mqtt_config.version;
-        data.clientID.cstring = mqtt_config.localName.c_str();
-        data.username.cstring = mqtt_config.localName.c_str();
-        data.password.cstring = mqtt_config.localPasswd.c_str();
+        data.clientID.cstring = mqtt_config.name.c_str();
+        data.username.cstring = mqtt_config.name.c_str();
+        data.password.cstring = mqtt_config.passwd.c_str();
         rc = local_client_->connect(data);
         if (rc != 0) {
             LOG_M_E(MQTT_CLIENT, "connect local mqtt fail, rc is %d\n", rc);
@@ -1929,81 +2100,11 @@ AX_BOOL MqttClient::Init(MQTT_CONFIG_T &mqtt_config) {
         }
     }
 
-    // 是否启用线上MQTT
-    cloud_enable_ = mqtt_config.cloudEnable;
-
-    if (cloud_enable_) {
-        std::string uid;
-        GetUID(uid);
-
-        cloud_topic_ = uid;
-        cloud_ipstack_ = std::make_unique<IPStack>();
-        cloud_client_ = std::make_unique<MQTT::Client<IPStack, Countdown>>(*cloud_ipstack_);
-
-        LOG_M_C(MQTT_CLIENT, "Mqtt Version is %d, cloud topic is %s", mqtt_config.version, cloud_topic_.c_str());
-        LOG_M_C(MQTT_CLIENT, "Connecting to %s:%d", mqtt_config.cloudHostname.c_str(), mqtt_config.cloudPort);
-
-        rc = cloud_ipstack_->connect(mqtt_config.cloudHostname.c_str(), mqtt_config.cloudPort);
-        if (rc != 0) {
-            LOG_M_E(MQTT_CLIENT, "connect cloud mqtt fail, rc is %d", rc);
-        } else {
-            MQTTPacket_connectData data = MQTTPacket_connectData_initializer;
-            data.MQTTVersion = mqtt_config.version;
-            data.clientID.cstring = mqtt_config.cloudName.c_str();
-            data.username.cstring = mqtt_config.cloudName.c_str();
-            data.password.cstring = mqtt_config.cloudPasswd.c_str();
-            rc = cloud_client_->connect(data);
-            if (rc != 0) {
-                LOG_M_E(MQTT_CLIENT, "connect cloud mqtt fail, rc is %d\n", rc);
-            } else {
-                LOG_M_C(MQTT_CLIENT, "cloud mqtt connected sucess");
-                rc = cloud_client_->subscribe(cloud_topic_.c_str(), MQTT::QOS0, MQTTCloudMessage);
-                if (rc != 0) {
-                    LOG_M_E(MQTT_CLIENT, "cloud mqtt subscribe failed, rc is %d\n", rc);
-                }
-
-                LOG_M_C(MQTT_CLIENT, "cloud mqtt subscribe [%s] success", cloud_topic_.c_str());
-            }
-        }
-
-        AX_CHAR szIP[64] = {0};
-        int ret = GetIP(szIP);
-        if (ret == -1) {
-            LOG_MM_D(MQTT_CLIENT, "GetIP fail.");
-        }
-
-        MemoryInfo memInfo = {0};
-        ret = GetMemoryInfo(memInfo);
-        if (ret == -1) {
-            LOG_MM_D(MQTT_CLIENT, "GetMemoryInfo fail.");
-        }
-
-        FlashInfo falsh_info = {0};
-        ret = GetDiskUsage("/", falsh_info);
-        if (ret == -1) {
-            LOG_MM_D(MQTT_CLIENT, "GetDiskUsage fail.");
-        }
-
-        std::string version;
-        GetVersion(version);
-
-        // 云端设备注册
-        json message = {
-            {"authorizationStatus", "已授权"},
-            {"deviceIp", szIP},
-            {"deviceSymbol", cloud_topic_},
-            {"memory", memInfo.totalMem},
-            {"softwareVersion", AI_BOX_VERSION},
-            {"status", "正常"},
-            {"storage", falsh_info.total},
-            {"systemVersion", version},
-            {"tenantId", "1"},
-        };
-
-        auto params = message.dump();
-        std::string res = BoxHttpRequest::Send("post", "http://192.168.0.196:8010/devices/admin/deviceInfo/save",
-                                               "Content-Type: application/json;", params, 5000);
-        LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
+    // 连接线上MQTT
+    if (mqtt_config.address != "" && 
+        mqtt_config.accessKey != "" && 
+        mqtt_config.secretKey != "") {
+        ConnectCloudMQTT();
     }
 
     return AX_TRUE;
@@ -2021,7 +2122,7 @@ AX_BOOL MqttClient::DeInit(AX_VOID) {
 
     local_ipstack_->disconnect();
 
-    if (cloud_enable_) {
+    if (cloud_mqtt_connected_) {
         rc = cloud_client_->unsubscribe(cloud_topic_.c_str());
         if (rc != 0)
             LOG_M_E(MQTT_CLIENT, "rc from unsubscribe was %d", rc);
@@ -2045,7 +2146,7 @@ AX_BOOL MqttClient::Start(AX_VOID) {
         return AX_FALSE;
     }
 
-    if (cloud_enable_) {
+    if (cloud_mqtt_connected_) {
         if (!cloud_work_thread_.Start([this](AX_VOID* pArg) -> AX_VOID { CloudWorkThread(pArg); }, nullptr, "MQTT_CLOUD_CLIENT")) {
             LOG_MM_E(MQTT_CLIENT, "Create ai switch thread fail.");
             return AX_FALSE;
@@ -2086,7 +2187,7 @@ AX_BOOL MqttClient::Stop(AX_VOID) {
     local_work_thread_.Stop();
     local_work_thread_.Join();
 
-    if (cloud_enable_) {
+    if (cloud_mqtt_connected_) {
         cloud_work_thread_.Stop();
         cloud_work_thread_.Join();
     }
@@ -2148,7 +2249,9 @@ AX_VOID MqttClient::CloudWorkThread(AX_VOID* pArg) {
         //     }
         // }
 
-        cloud_client_->yield(50UL); // sleep 50ms
+        if (cloud_client_) {
+            cloud_client_->yield(50UL); // sleep 50ms
+        }
     }
 
     LOG_M_C(MQTT_CLIENT, "CloudWorkThread ---");
