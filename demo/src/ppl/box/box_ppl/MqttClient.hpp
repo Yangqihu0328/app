@@ -242,23 +242,6 @@ struct AlgoInfo{
     int index;
 };
 
-//我希望前端限制传入的channel_id为顺序的，从0-15，而不是乱序的。
-struct MediaChanel{
-    int id; //通道id是前端传下来的
-    std::string url; //流地址
-    std::string channel_status; //输出通道信息
-};
-
-
-struct AlgoTask{
-    int id;
-    std::string url;
-    std::string channel_status;
-    int algo_index0;
-    int algo_index1;
-    int algo_index2;
-};
-
 enum ContrlCmd {
   StartAlgo = 0,
   StopAlgo = 1,
@@ -363,7 +346,6 @@ protected:
 	std::string local_topic_;
 
     AX_BOOL cloud_enable_{AX_FALSE};
-    std::string cloud_topic_;
 
     CAXThread local_work_thread_;
     CAXThread cloud_work_thread_;

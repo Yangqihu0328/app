@@ -48,6 +48,7 @@ enum {
 static std::shared_ptr<IPStack> local_ipstack_ = nullptr;
 static std::shared_ptr<MQTT::Client<IPStack, Countdown>> local_client_ = nullptr;
 
+static std::string cloud_topic_;
 static std::shared_ptr<IPStack> cloud_ipstack_ = nullptr;
 static std::shared_ptr<MQTT::Client<IPStack, Countdown>> cloud_client_ = nullptr;
 
@@ -70,16 +71,40 @@ static string GetExecPath(AX_VOID) {
     return strPath;
 }
 
-static int GetVersion(std::string& version) {
-    std::ifstream temp_file("/proc/ax_proc/version");
+static int GetUID(std::string& uid) {
+    std::ifstream temp_file("/proc/ax_proc/uid");
     if (!temp_file) {
-        std::cerr << "Cannot open temperature file" << std::endl;
+        std::cerr << "Cannot open uid file" << std::endl;
         return -1;
     }
 
     std::string temp_line;
     if (!std::getline(temp_file, temp_line)) {
-        std::cerr << "Cannot read temperature" << std::endl;
+        std::cerr << "Cannot read uid" << std::endl;
+        return -1;
+    }
+
+    size_t pos = temp_line.find(' ');
+    if (pos != std::string::npos) {
+        std::string result = temp_line.substr(pos + 1);
+        uid = std::move(result);
+    } else {
+        uid = std::move(temp_line);
+    }
+
+    return 0;
+}
+
+static int GetVersion(std::string& version) {
+    std::ifstream temp_file("/proc/ax_proc/version");
+    if (!temp_file) {
+        std::cerr << "Cannot open version file" << std::endl;
+        return -1;
+    }
+
+    std::string temp_line;
+    if (!std::getline(temp_file, temp_line)) {
+        std::cerr << "Cannot read version" << std::endl;
         return -1;
     }
 
@@ -224,7 +249,7 @@ static int GetDiskUsage(const std::string& path, FlashInfo &falsh_info) {
     return 0;
 }
 
-static bool SendMsg(const char *topic, const char *msg, size_t len) {
+static bool SendMsg(const char *msg, size_t len, bool local) {
     LOG_M_C(MQTT_CLIENT, "SendMsg ++++.");
 
     MQTT::Message message;
@@ -234,13 +259,25 @@ static bool SendMsg(const char *topic, const char *msg, size_t len) {
     message.id = 0;
     message.payload = (void *)msg;
     message.payloadlen = len;
-    if (local_client_) {
-        int ret = local_client_->publish(topic, message);
-        if (ret != 0) {
-            LOG_M_E(MQTT_CLIENT, "publish message len %ld failed %d...\n", len, ret);
+
+    if (local) {
+        if (local_client_) {
+            int ret = local_client_->publish("web-message", message);
+            if (ret != 0) {
+                LOG_M_E(MQTT_CLIENT, "publish message len %ld failed %d...\n", len, ret);
+            }
+        } else {
+            LOG_M_E(MQTT_CLIENT, "MQTT CLIENT can not get client to publish");
         }
     } else {
-        LOG_M_E(MQTT_CLIENT, "MQTT CLIENT can not get client to publish");
+        if (cloud_client_) {
+            int ret = cloud_client_->publish(cloud_topic_.c_str(), message);
+            if (ret != 0) {
+                LOG_M_E(MQTT_CLIENT, "publish message len %ld failed %d...\n", len, ret);
+            }
+        } else {
+            LOG_M_E(MQTT_CLIENT, "MQTT CLIENT can not get client to publish");
+        }
     }
 
     LOG_M_C(MQTT_CLIENT, "SendMsg ----.");
@@ -248,7 +285,7 @@ static bool SendMsg(const char *topic, const char *msg, size_t len) {
     return true;
 }
 
-static void OnLogin(const std::string& account, const std::string& password) {
+static void OnLogin(const std::string& account, const std::string& password, bool local) {
     LOG_M_C(MQTT_CLIENT, "OnLogin ++++.");
 
     json child;
@@ -265,14 +302,14 @@ static void OnLogin(const std::string& account, const std::string& password) {
     }
 
     std::string payload = root.dump();
-    SendMsg("web-message", payload.c_str(), payload.size());
+    SendMsg(payload.c_str(), payload.size(), local);
 
     isLogin = true;
 
     LOG_M_C(MQTT_CLIENT, "OnLogin ----.");
 }
 
-static void OnLogout() {
+static void OnLogout(bool local) {
     LOG_M_C(MQTT_CLIENT, "OnLogout ++++.");
 
     json child;
@@ -284,14 +321,14 @@ static void OnLogout() {
     root["data"] = child;
 
     std::string payload = root.dump();
-    SendMsg("web-message", payload.c_str(), payload.size());
+    SendMsg(payload.c_str(), payload.size(), local);
 
     isLogin = false;
 
     LOG_M_C(MQTT_CLIENT, "OnLogout ----.");
 }
 
-static void OnGetDashBoardInfo() {
+static void OnGetDashBoardInfo(bool local) {
     LOG_M_C(MQTT_CLIENT, "OnGetDashBoardInfo ++++.");
 
     int temperature = -1;
@@ -359,12 +396,12 @@ static void OnGetDashBoardInfo() {
     root["data"] = board_info;
 
     std::string payload = root.dump();
-    SendMsg("web-message", payload.c_str(), payload.size());
+    SendMsg(payload.c_str(), payload.size(), local);
 
     LOG_M_C(MQTT_CLIENT, "OnGetDashBoardInfo ----.");
 }
 
-static void OnRebootAiBox() {
+static void OnRebootAiBox(bool local) {
     LOG_M_D(MQTT_CLIENT, "OnRebootAiBox ++++.");
 
     json child;
@@ -377,14 +414,14 @@ static void OnRebootAiBox() {
 
     std::string payload = root.dump();
 
-    SendMsg("web-message", payload.c_str(), payload.size());
+    SendMsg(payload.c_str(), payload.size(), local);
 
     system("reboot");
 
     LOG_M_D(MQTT_CLIENT, "OnRebootAiBox ----.");
 }
 
-static void OnRestartAppService() {
+static void OnRestartAppService(bool local) {
     LOG_M_C(MQTT_CLIENT, "OnRestartAppService ++++.");
 
     json child;
@@ -397,7 +434,7 @@ static void OnRestartAppService() {
 
     std::string payload = root.dump();
 
-    SendMsg("web-message", payload.c_str(), payload.size());
+    SendMsg(payload.c_str(), payload.size(), local);
 
     system("/usr/bin/systemctl restart yj-mediaserver");
     system("/usr/bin/systemctl restart yj-aibox");
@@ -405,7 +442,7 @@ static void OnRestartAppService() {
     LOG_M_C(MQTT_CLIENT, "OnRestartAppService ----.");
 }
 
-static void OnSyncSystemTime(int year, int month, int day, int hour, int minute, int second) {
+static void OnSyncSystemTime(int year, int month, int day, int hour, int minute, int second, bool local) {
     LOG_M_C(MQTT_CLIENT, "OnSyncSystemTime ++++.");
 
     json child;
@@ -431,7 +468,7 @@ static void OnSyncSystemTime(int year, int month, int day, int hour, int minute,
         root["data"] = child;
 
         std::string payload = root.dump();
-        SendMsg("web-message", payload.c_str(), payload.size());
+        SendMsg(payload.c_str(), payload.size(), local);
 
         return;
     }
@@ -450,7 +487,7 @@ static void OnSyncSystemTime(int year, int month, int day, int hour, int minute,
     root["data"] = child;
 
     std::string payload = root.dump();
-    SendMsg("web-message", payload.c_str(), payload.size());
+    SendMsg(payload.c_str(), payload.size(), local);
 
     LOG_M_C(MQTT_CLIENT, "OnSyncSystemTime ----.");
 }
@@ -620,7 +657,7 @@ bool check_RTSP_stream(const std::string& rtspUrl) {
     return true;
 }
 
-static void OnGetMediaChannelList() {
+static void OnGetMediaChannelList(bool local) {
     LOG_M_C(MQTT_CLIENT, "OnGetMediaChannelList ++++.");
 
     // 获取当前通道信息
@@ -650,12 +687,12 @@ static void OnGetMediaChannelList() {
     root["data"] = child;
 
     std::string payload = root.dump();
-    SendMsg("web-message", payload.c_str(), payload.size());
+    SendMsg(payload.c_str(), payload.size(), local);
 
     LOG_M_C(MQTT_CLIENT, "OnGetMediaChannelList ----.");
 }
 
-static void OnSetMediaChannelInfo(AX_U32 id, const std::string& mediaUrl, const std::string& mediaName, const std::string& mediaDesc) {
+static void OnSetMediaChannelInfo(AX_U32 id, const std::string& mediaUrl, const std::string& mediaName, const std::string& mediaDesc, bool local) {
     LOG_M_C(MQTT_CLIENT, "OnSetMediaChannelInfo ++++.");
 
     AX_U32 status = check_RTSP_stream(mediaUrl) ? 1 : 0;
@@ -692,12 +729,12 @@ static void OnSetMediaChannelInfo(AX_U32 id, const std::string& mediaUrl, const 
     root["data"] = child;
 
     std::string payload = root.dump();
-    SendMsg("web-message", payload.c_str(), payload.size());
+    SendMsg(payload.c_str(), payload.size(), local);
 
     LOG_M_C(MQTT_CLIENT, "OnSetMediaChannelInfo ----.");
 }
 
-static void OnDelMediaChannelInfo(AX_U32 id) {
+static void OnDelMediaChannelInfo(AX_U32 id, bool local) {
     LOG_M_C(MQTT_CLIENT, "OnDelMediaChannelInfo ++++.");
 
     json root;
@@ -726,12 +763,12 @@ static void OnDelMediaChannelInfo(AX_U32 id) {
     root["data"] = child;
 
     std::string payload = root.dump();
-    SendMsg("web-message", payload.c_str(), payload.size());
+    SendMsg(payload.c_str(), payload.size(), local);
 
     LOG_M_C(MQTT_CLIENT, "OnDelMediaChannelInfo ----.");
 }
 
-static void OnGetAiModelList() {
+static void OnGetAiModelList(bool local) {
     LOG_M_C(MQTT_CLIENT, "OnGetAiModelList ++++.");
 
     // 获取当前通道信息
@@ -761,12 +798,12 @@ static void OnGetAiModelList() {
     root["data"] = child;
 
     std::string payload = root.dump();
-    SendMsg("web-message", payload.c_str(), payload.size());
+    SendMsg(payload.c_str(), payload.size(), local);
 
     LOG_M_C(MQTT_CLIENT, "OnGetAiModelList ----.");
 }
 
-static void OnGetAlgoTaskList() {
+static void OnGetAlgoTaskList(bool local) {
     LOG_M_C(MQTT_CLIENT, "OnGetAlgoTaskList ++++.");
 
     // 获取当前通道信息
@@ -804,12 +841,13 @@ static void OnGetAlgoTaskList() {
     root["data"] = child;
 
     std::string payload = root.dump();
-    SendMsg("web-message", payload.c_str(), payload.size());
+    SendMsg(payload.c_str(), payload.size(), local);
 
     LOG_M_C(MQTT_CLIENT, "OnGetAlgoTaskList ----.");
 }
 
-static void OnSetAlgoTaskInfo(AX_U32 id, const std::string& pushUrl, const std::string& taskName, const std::string& taskDesc, std::vector<AX_U32> vAlgo) {
+static void OnSetAlgoTaskInfo(AX_U32 id, const std::string &pushUrl, const std::string &taskName, const std::string &taskDesc,
+                              std::vector<AX_U32> vAlgo, bool local) {
     LOG_M_C(MQTT_CLIENT, "OnSetAlgoTaskInfo ++++.");
 
     json root;
@@ -845,12 +883,12 @@ static void OnSetAlgoTaskInfo(AX_U32 id, const std::string& pushUrl, const std::
     root["data"] = child;
 
     std::string payload = root.dump();
-    SendMsg("web-message", payload.c_str(), payload.size());
+    SendMsg(payload.c_str(), payload.size(), local);
 
     LOG_M_C(MQTT_CLIENT, "OnSetAlgoTaskInfo ----.");
 }
 
-static void OnDelAlgoTaskInfo(AX_U32 id) {
+static void OnDelAlgoTaskInfo(AX_U32 id, bool local) {
     LOG_M_C(MQTT_CLIENT, "OnDelAlgoTaskInfo ++++.");
 
     json root;
@@ -888,7 +926,7 @@ static void OnDelAlgoTaskInfo(AX_U32 id) {
     root["data"] = child;
 
     std::string payload = root.dump();
-    SendMsg("web-message", payload.c_str(), payload.size());
+    SendMsg(payload.c_str(), payload.size(), local);
 
     LOG_M_C(MQTT_CLIENT, "OnDelAlgoTaskInfo ----.");
 }
@@ -1048,7 +1086,7 @@ static AX_BOOL StopPreview(AX_U32 id, AX_U32 controlCommand) {
     return AX_FALSE;
 }
 
-static void OnAlgoTaskControl(AX_U32 id, AX_U32 controlCommand) {
+static void OnAlgoTaskControl(AX_U32 id, AX_U32 controlCommand, bool local) {
     LOG_M_C(MQTT_CLIENT, "OnAlgoTaskControl ++++.");
 
     AX_BOOL ret = AX_FALSE;
@@ -1078,12 +1116,12 @@ static void OnAlgoTaskControl(AX_U32 id, AX_U32 controlCommand) {
     root["data"] = child;
 
     std::string payload = root.dump();
-    SendMsg("web-message", payload.c_str(), payload.size());
+    SendMsg(payload.c_str(), payload.size(), local);
 
     LOG_M_C(MQTT_CLIENT, "OnAlgoTaskControl ----.");
 }
 
-static void OnAlgoTaskSnapshot(AX_U32 id) {
+static void OnAlgoTaskSnapshot(AX_U32 id, bool local) {
     LOG_M_C(MQTT_CLIENT, "OnAlgoTaskSnapshot ++++.");
 
     LOG_M_C(MQTT_CLIENT, "OnAlgoTaskSnapshot ----.");
@@ -1185,7 +1223,7 @@ static int get_gateway(struct in_addr *gw,const char *ifname) {
     return 0;
 }
 
-static void OnGetAiBoxNetwork() {
+static void OnGetAiBoxNetwork(bool local) {
     LOG_M_C(MQTT_CLIENT, "OnGetAiBoxNetwork ++++.");
 
     struct ifaddrs *ifaddr, *ifa;
@@ -1271,12 +1309,13 @@ static void OnGetAiBoxNetwork() {
     root["data"] = child;
 
     std::string payload = root.dump();
-    SendMsg("web-message", payload.c_str(), payload.size());
+    SendMsg(payload.c_str(), payload.size(), local);
 
     LOG_M_C(MQTT_CLIENT, "OnGetAiBoxNetwork ----.");
 }
 
-static void OnSetAiBoxNetwork(const std::string& name, const AX_U32 dhcp, const std::string& address, const std::string& gateway, const std::string& mask, const std::string& dns) {
+static void OnSetAiBoxNetwork(const std::string &name, const AX_U32 dhcp, const std::string &address, const std::string &gateway,
+                              const std::string &mask, const std::string &dns, bool local) {
     LOG_M_C(MQTT_CLIENT, "OnSetAiBoxNetwork ++++.");
 
     bool found = false;
@@ -1322,7 +1361,7 @@ static void OnSetAiBoxNetwork(const std::string& name, const AX_U32 dhcp, const 
     root["data"] = child;
 
     std::string payload = root.dump();
-    SendMsg("web-message", payload.c_str(), payload.size());
+    SendMsg(payload.c_str(), payload.size(), local);
 
     system("/etc/init.d/networking restart");
 
@@ -1413,7 +1452,7 @@ AX_VOID MqttClient::SendLocalAlarmMsg() {
                 root["msg"] = "操作成功";
                 root["data"] = child;
                 std::string payload = root.dump();
-                SendMsg("web-message", payload.c_str(), payload.size());
+                SendMsg(payload.c_str(), payload.size(), true);
             }
 
             // 播放声音
@@ -1504,7 +1543,7 @@ AX_VOID MqttClient::SendCloudAlarmMsg() {
     // }
 }
 
-static void OnAlarmControl(AX_BOOL isAudio, AX_U32 status) {
+static void OnAlarmControl(AX_BOOL isAudio, AX_U32 status, bool local) {
     json child;
     AX_BOOL ret = AX_FALSE;
     if (isAudio) {
@@ -1521,10 +1560,10 @@ static void OnAlarmControl(AX_BOOL isAudio, AX_U32 status) {
     root["data"] = child;
 
     std::string payload = root.dump();
-    SendMsg("web-message", payload.c_str(), payload.size());
+    SendMsg(payload.c_str(), payload.size(), local);
 }
 
-static void OnGetAlarmStatus(void) {
+static void OnGetAlarmStatus(bool local) {
     DETECT_CONFIG_T detecConfig = CBoxConfig::GetInstance()->GetDetectConfig();
     
     json child;
@@ -1538,10 +1577,10 @@ static void OnGetAlarmStatus(void) {
     root["data"] = child;
 
     std::string payload = root.dump();
-    SendMsg("web-message", payload.c_str(), payload.size());
+    SendMsg(payload.c_str(), payload.size(), local);
 }
 
-static AX_VOID removeJpgFile(AX_BOOL isDir, nlohmann::json fileUrls) {
+static AX_VOID removeJpgFile(AX_BOOL isDir, nlohmann::json fileUrls, bool local) {
     printf("removeJpgFile ++++\n");
 
     json root, child;
@@ -1570,7 +1609,7 @@ static AX_VOID removeJpgFile(AX_BOOL isDir, nlohmann::json fileUrls) {
     root["data"] = child;
 
     std::string payload = root.dump();
-    SendMsg("web-message", payload.c_str(), payload.size());
+    SendMsg(payload.c_str(), payload.size(), local);
 
     printf("removeJpgFile ----\n");
 }
@@ -1604,7 +1643,7 @@ static void MQTTLocalMessage(MQTT::MessageData& md) {
     if (type == "login") {
         std::string account = jsonRes["account"];
         std::string password = jsonRes["password"];
-        OnLogin(account, password);
+        OnLogin(account, password, true);
 
         return;
     }
@@ -1620,19 +1659,19 @@ static void MQTTLocalMessage(MQTT::MessageData& md) {
         root["msg"] = "please login first.";
 
         std::string payload = root.dump();
-        SendMsg("web-message", payload.c_str(), payload.size());
+        SendMsg(payload.c_str(), payload.size(), true);
 
         return;
     }
 
     if (type == "logout") {
-        OnLogout();
+        OnLogout(true);
     } else if (type == "getDashBoardInfo") { // 获取仪表盘信息
-        OnGetDashBoardInfo();
+        OnGetDashBoardInfo(true);
     } else if (type == "rebootAiBox") { // 重启盒子
-        OnRebootAiBox();
+        OnRebootAiBox(true);
     } else if (type == "restartAppService") { // 重启应用服务
-        OnRestartAppService();
+        OnRestartAppService(true);
     } else if (type == "syncSystemTime") { // 同步系统时间
         AX_S32 year = jsonRes["year"];
         AX_S32 month = jsonRes["month"];
@@ -1640,22 +1679,22 @@ static void MQTTLocalMessage(MQTT::MessageData& md) {
         AX_S32 hour = jsonRes["hour"];
         AX_S32 minute = jsonRes["minute"];
         AX_S32 second = jsonRes["second"];
-        OnSyncSystemTime(year, month, day, hour, minute, second);
+        OnSyncSystemTime(year, month, day, hour, minute, second, true);
     } else if (type == "getMediaChannelList") { // 获取通道列表
-        OnGetMediaChannelList();
+        OnGetMediaChannelList(true);
     } else if (type == "setMediaChannelInfo") { // 设置通道信息
         AX_U32 mediaId = jsonRes["mediaId"];
         std::string mediaUrl = jsonRes["mediaUrl"];
         std::string mediaName = jsonRes["mediaName"];
         std::string mediaDesc = jsonRes["mediaDesc"];
-        OnSetMediaChannelInfo(mediaId, mediaUrl, mediaName, mediaDesc);
+        OnSetMediaChannelInfo(mediaId, mediaUrl, mediaName, mediaDesc, true);
     } else if (type == "delMediaChannelInfo") { // 删除通道信息
         AX_U32 mediaId = jsonRes["mediaId"];
-        OnDelMediaChannelInfo(mediaId);
+        OnDelMediaChannelInfo(mediaId, true);
     } else if (type == "getAiModelList") { // 算法模型列表
-        OnGetAiModelList();
+        OnGetAiModelList(true);
     } else if (type == "getAlgoTaskList") { // 算法任务列表
-        OnGetAlgoTaskList();
+        OnGetAlgoTaskList(true);
     } else if (type == "setAlgoTaskInfo") { // 配置算法任务
         AX_U32 mediaId = jsonRes["mediaId"];
         std::string pushUrl  = jsonRes["taskPushUrl"];
@@ -1670,19 +1709,19 @@ static void MQTTLocalMessage(MQTT::MessageData& md) {
             }
         }
 
-        OnSetAlgoTaskInfo(mediaId, pushUrl, taskName, taskDesc, vAlgo);
+        OnSetAlgoTaskInfo(mediaId, pushUrl, taskName, taskDesc, vAlgo, true);
     } else if (type == "delAlgoTaskInfo") { // 删除算法任务
         AX_U32 mediaId = jsonRes["mediaId"];
-        OnDelAlgoTaskInfo(mediaId);
+        OnDelAlgoTaskInfo(mediaId, true);
     } else if (type == "algoTaskControl") { // 控制算法启停
         AX_U32 mediaId = jsonRes["mediaId"];
         AX_U32 controlCommand = jsonRes["controlCommand"];
-        OnAlgoTaskControl(mediaId, controlCommand);
+        OnAlgoTaskControl(mediaId, controlCommand, true);
     } else if (type == "algoTaskSnapshot") { // 参考标底图
         AX_U32 mediaId = jsonRes["mediaId"];
-        OnAlgoTaskSnapshot(mediaId);
+        OnAlgoTaskSnapshot(mediaId, true);
     } else if (type == "getAiBoxNetwork") { // 盒子网络信息
-        OnGetAiBoxNetwork();
+        OnGetAiBoxNetwork(true);
     } else if (type == "setAiBoxNetwork") { // 设置盒子网络
         std::string name = jsonRes["name"];
         AX_U32 dhcp = jsonRes["dhcp"];
@@ -1690,20 +1729,20 @@ static void MQTTLocalMessage(MQTT::MessageData& md) {
         std::string gateway = jsonRes["gateway"];
         std::string mask = jsonRes["mask"];
         std::string dns = jsonRes["dns"];
-        OnSetAiBoxNetwork(name, dhcp, address, gateway, mask, dns);
+        OnSetAiBoxNetwork(name, dhcp, address, gateway, mask, dns, true);
     } else if (type == "playAudio") { // 播放告警音频
         AX_U32 status = jsonRes["status"];
-        OnAlarmControl(AX_TRUE, status);
+        OnAlarmControl(AX_TRUE, status, true);
     } else if (type == "showWindow") { // 显示告警弹窗
         AX_U32 status = jsonRes["status"];
-        OnAlarmControl(AX_FALSE, status);
+        OnAlarmControl(AX_FALSE, status, true);
     } else if (type == "getAlarmStatus") { // 获取告警配置
-        OnGetAlarmStatus();
+        OnGetAlarmStatus(true);
     } else if (type == "clearAllJpg") { // 删除所有图片
-        removeJpgFile(AX_TRUE, NULL);
+        removeJpgFile(AX_TRUE, NULL, true);
     } else if (type == "clearJpgFiles") { // 删除指定图片
         nlohmann::json fileUrls = jsonRes["fileUrls"];
-        removeJpgFile(AX_FALSE, fileUrls);
+        removeJpgFile(AX_FALSE, fileUrls, true);
     }
 
     LOG_MM_D(MQTT_CLIENT,"MQTTLocalMessage ----\n");
@@ -1722,94 +1761,94 @@ static void MQTTCloudMessage(MQTT::MessageData& md) {
     LOG_M_C(MQTT_CLIENT, "recv msg: %s", recv_msg.c_str());
     LOG_M_C(MQTT_CLIENT, "=============================================================");
 
-    // std::string type;
-    // nlohmann::json jsonRes;
-    // try {
-    //     jsonRes = nlohmann::json::parse(recv_msg);
-    //     type = jsonRes["type"];
-    // } catch (const nlohmann::json::parse_error& e) {
-    //     std::cerr << "JSON parse error: " << e.what() << std::endl;
-    //     std::cerr << "Received message: " << recv_msg << std::endl;
-    // } catch (const std::exception& e) {
-    //     std::cerr << "An error occurred: " << e.what() << std::endl;
-    // }
+    std::string type;
+    nlohmann::json jsonRes;
+    try {
+        jsonRes = nlohmann::json::parse(recv_msg);
+        type = jsonRes["type"];
+    } catch (const nlohmann::json::parse_error& e) {
+        std::cerr << "JSON parse error: " << e.what() << std::endl;
+        std::cerr << "Received message: " << recv_msg << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "An error occurred: " << e.what() << std::endl;
+    }
 
-    // if (type == "rebootAiBox") { // 重启盒子
-    //     OnRebootAiBox();
-    // } else if (type == "restartAppService") { // 重启应用服务
-    //     OnRestartAppService();
-    // } else if (type == "syncSystemTime") { // 同步系统时间
-    //     AX_S32 year = jsonRes["year"];
-    //     AX_S32 month = jsonRes["month"];
-    //     AX_S32 day = jsonRes["day"];
-    //     AX_S32 hour = jsonRes["hour"];
-    //     AX_S32 minute = jsonRes["minute"];
-    //     AX_S32 second = jsonRes["second"];
-    //     OnSyncSystemTime(year, month, day, hour, minute, second);
-    // } else if (type == "getMediaChannelList") { // 获取通道列表
-    //     OnGetMediaChannelList();
-    // } else if (type == "setMediaChannelInfo") { // 设置通道信息
-    //     AX_U32 mediaId = jsonRes["mediaId"];
-    //     std::string mediaUrl = jsonRes["mediaUrl"];
-    //     std::string mediaName = jsonRes["mediaName"];
-    //     std::string mediaDesc = jsonRes["mediaDesc"];
-    //     OnSetMediaChannelInfo(mediaId, mediaUrl, mediaName, mediaDesc);
-    // } else if (type == "delMediaChannelInfo") { // 删除通道信息
-    //     AX_U32 mediaId = jsonRes["mediaId"];
-    //     OnDelMediaChannelInfo(mediaId);
-    // } else if (type == "getAiModelList") { // 算法模型列表
-    //     OnGetAiModelList();
-    // } else if (type == "getAlgoTaskList") { // 算法任务列表
-    //     OnGetAlgoTaskList();
-    // } else if (type == "setAlgoTaskInfo") { // 配置算法任务
-    //     AX_U32 mediaId = jsonRes["mediaId"];
-    //     std::string pushUrl  = jsonRes["taskPushUrl"];
-    //     std::string taskName = jsonRes["taskName"];
-    //     std::string taskDesc = jsonRes["taskDesc"];
+    if (type == "rebootAiBox") { // 重启盒子
+        OnRebootAiBox(false);
+    } else if (type == "restartAppService") { // 重启应用服务
+        OnRestartAppService(false);
+    } else if (type == "syncSystemTime") { // 同步系统时间
+        AX_S32 year = jsonRes["year"];
+        AX_S32 month = jsonRes["month"];
+        AX_S32 day = jsonRes["day"];
+        AX_S32 hour = jsonRes["hour"];
+        AX_S32 minute = jsonRes["minute"];
+        AX_S32 second = jsonRes["second"];
+        OnSyncSystemTime(year, month, day, hour, minute, second, false);
+    } else if (type == "getMediaChannelList") { // 获取通道列表
+        OnGetMediaChannelList(false);
+    } else if (type == "setMediaChannelInfo") { // 设置通道信息
+        AX_U32 mediaId = jsonRes["mediaId"];
+        std::string mediaUrl = jsonRes["mediaUrl"];
+        std::string mediaName = jsonRes["mediaName"];
+        std::string mediaDesc = jsonRes["mediaDesc"];
+        OnSetMediaChannelInfo(mediaId, mediaUrl, mediaName, mediaDesc, false);
+    } else if (type == "delMediaChannelInfo") { // 删除通道信息
+        AX_U32 mediaId = jsonRes["mediaId"];
+        OnDelMediaChannelInfo(mediaId, false);
+    } else if (type == "getAiModelList") { // 算法模型列表
+        OnGetAiModelList(false);
+    } else if (type == "getAlgoTaskList") { // 算法任务列表
+        OnGetAlgoTaskList(false);
+    } else if (type == "setAlgoTaskInfo") { // 配置算法任务
+        AX_U32 mediaId = jsonRes["mediaId"];
+        std::string pushUrl  = jsonRes["taskPushUrl"];
+        std::string taskName = jsonRes["taskName"];
+        std::string taskDesc = jsonRes["taskDesc"];
 
-    //     std::vector<AX_U32> vAlgo;
-    //     nlohmann::json algos = jsonRes["taskAlgos"];
-    //     if (algos.is_array()) {
-    //         for (auto algo : algos) {
-    //             vAlgo.push_back((AX_U32)algo);
-    //         }
-    //     }
+        std::vector<AX_U32> vAlgo;
+        nlohmann::json algos = jsonRes["taskAlgos"];
+        if (algos.is_array()) {
+            for (auto algo : algos) {
+                vAlgo.push_back((AX_U32)algo);
+            }
+        }
 
-    //     OnSetAlgoTaskInfo(mediaId, pushUrl, taskName, taskDesc, vAlgo);
-    // } else if (type == "delAlgoTaskInfo") { // 删除算法任务
-    //     AX_U32 mediaId = jsonRes["mediaId"];
-    //     OnDelAlgoTaskInfo(mediaId);
-    // } else if (type == "algoTaskControl") { // 控制算法启停
-    //     AX_U32 mediaId = jsonRes["mediaId"];
-    //     AX_U32 controlCommand = jsonRes["controlCommand"];
-    //     OnAlgoTaskControl(mediaId, controlCommand);
-    // } else if (type == "algoTaskSnapshot") { // 参考标底图
-    //     AX_U32 mediaId = jsonRes["mediaId"];
-    //     OnAlgoTaskSnapshot(mediaId);
-    // } else if (type == "getAiBoxNetwork") { // 盒子网络信息
-    //     OnGetAiBoxNetwork();
-    // } else if (type == "setAiBoxNetwork") { // 设置盒子网络
-    //     std::string name = jsonRes["name"];
-    //     AX_U32 dhcp = jsonRes["dhcp"];
-    //     std::string address = jsonRes["address"];
-    //     std::string gateway = jsonRes["gateway"];
-    //     std::string mask = jsonRes["mask"];
-    //     std::string dns = jsonRes["dns"];
-    //     OnSetAiBoxNetwork(name, dhcp, address, gateway, mask, dns);
-    // } else if (type == "playAudio") { // 播放告警音频
-    //     AX_U32 status = jsonRes["status"];
-    //     OnAlarmControl(AX_TRUE, status);
-    // } else if (type == "showWindow") { // 显示告警弹窗
-    //     AX_U32 status = jsonRes["status"];
-    //     OnAlarmControl(AX_FALSE, status);
-    // } else if (type == "getAlarmStatus") { // 获取告警配置
-    //     OnGetAlarmStatus();
-    // } else if (type == "clearAllJpg") { // 删除所有图片
-    //     removeJpgFile(AX_TRUE, NULL);
-    // } else if (type == "clearJpgFiles") { // 删除指定图片
-    //     nlohmann::json fileUrls = jsonRes["fileUrls"];
-    //     removeJpgFile(AX_FALSE, fileUrls);
-    // }
+        OnSetAlgoTaskInfo(mediaId, pushUrl, taskName, taskDesc, vAlgo, false);
+    } else if (type == "delAlgoTaskInfo") { // 删除算法任务
+        AX_U32 mediaId = jsonRes["mediaId"];
+        OnDelAlgoTaskInfo(mediaId, false);
+    } else if (type == "algoTaskControl") { // 控制算法启停
+        AX_U32 mediaId = jsonRes["mediaId"];
+        AX_U32 controlCommand = jsonRes["controlCommand"];
+        OnAlgoTaskControl(mediaId, controlCommand, false);
+    } else if (type == "algoTaskSnapshot") { // 参考标底图
+        AX_U32 mediaId = jsonRes["mediaId"];
+        OnAlgoTaskSnapshot(mediaId, false);
+    } else if (type == "getAiBoxNetwork") { // 盒子网络信息
+        OnGetAiBoxNetwork(false);
+    } else if (type == "setAiBoxNetwork") { // 设置盒子网络
+        std::string name = jsonRes["name"];
+        AX_U32 dhcp = jsonRes["dhcp"];
+        std::string address = jsonRes["address"];
+        std::string gateway = jsonRes["gateway"];
+        std::string mask = jsonRes["mask"];
+        std::string dns = jsonRes["dns"];
+        OnSetAiBoxNetwork(name, dhcp, address, gateway, mask, dns, false);
+    } else if (type == "playAudio") { // 播放告警音频
+        AX_U32 status = jsonRes["status"];
+        OnAlarmControl(AX_TRUE, status, false);
+    } else if (type == "showWindow") { // 显示告警弹窗
+        AX_U32 status = jsonRes["status"];
+        OnAlarmControl(AX_FALSE, status, false);
+    } else if (type == "getAlarmStatus") { // 获取告警配置
+        OnGetAlarmStatus(false);
+    } else if (type == "clearAllJpg") { // 删除所有图片
+        removeJpgFile(AX_TRUE, NULL, false);
+    } else if (type == "clearJpgFiles") { // 删除指定图片
+        nlohmann::json fileUrls = jsonRes["fileUrls"];
+        removeJpgFile(AX_FALSE, fileUrls, false);
+    }
 
     LOG_MM_D(MQTT_CLIENT,"MQTTCloudMessage ----\n");
 }
@@ -1894,7 +1933,10 @@ AX_BOOL MqttClient::Init(MQTT_CONFIG_T &mqtt_config) {
     cloud_enable_ = mqtt_config.cloudEnable;
 
     if (cloud_enable_) {
-        cloud_topic_ = mqtt_config.cloudTopic;
+        std::string uid;
+        GetUID(uid);
+
+        cloud_topic_ = uid;
         cloud_ipstack_ = std::make_unique<IPStack>();
         cloud_client_ = std::make_unique<MQTT::Client<IPStack, Countdown>>(*cloud_ipstack_);
 
@@ -1923,55 +1965,46 @@ AX_BOOL MqttClient::Init(MQTT_CONFIG_T &mqtt_config) {
                 LOG_M_C(MQTT_CLIENT, "cloud mqtt subscribe [%s] success", cloud_topic_.c_str());
             }
         }
+
+        AX_CHAR szIP[64] = {0};
+        int ret = GetIP(szIP);
+        if (ret == -1) {
+            LOG_MM_D(MQTT_CLIENT, "GetIP fail.");
+        }
+
+        MemoryInfo memInfo = {0};
+        ret = GetMemoryInfo(memInfo);
+        if (ret == -1) {
+            LOG_MM_D(MQTT_CLIENT, "GetMemoryInfo fail.");
+        }
+
+        FlashInfo falsh_info = {0};
+        ret = GetDiskUsage("/", falsh_info);
+        if (ret == -1) {
+            LOG_MM_D(MQTT_CLIENT, "GetDiskUsage fail.");
+        }
+
+        std::string version;
+        GetVersion(version);
+
+        // 云端设备注册
+        json message = {
+            {"authorizationStatus", "已授权"},
+            {"deviceIp", szIP},
+            {"deviceSymbol", cloud_topic_},
+            {"memory", memInfo.totalMem},
+            {"softwareVersion", AI_BOX_VERSION},
+            {"status", "正常"},
+            {"storage", falsh_info.total},
+            {"systemVersion", version},
+            {"tenantId", "1"},
+        };
+
+        auto params = message.dump();
+        std::string res = BoxHttpRequest::Send("post", "http://192.168.0.196:8010/devices/admin/deviceInfo/save",
+                                               "Content-Type: application/json;", params, 5000);
+        LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
     }
-
-    // int temperature = -1;
-    // int ret = GetTemperature(temperature);
-    // if (ret == -1) {
-    //     LOG_MM_D(MQTT_CLIENT, "GetTemperature fail.");
-    // }
-
-    // AX_CHAR szIP[64] = {0};
-    // ret = GetIP(szIP);
-    // if (ret == -1) {
-    //     LOG_MM_D(MQTT_CLIENT, "GetIP fail.");
-    // }
-
-    // MemoryInfo memInfo = {0};
-    // ret = GetMemoryInfo(memInfo);
-    // if (ret == -1) {
-    //     LOG_MM_D(MQTT_CLIENT, "GetMemoryInfo fail.");
-    // }
-
-    // FlashInfo falsh_info = {0};
-    // ret = GetDiskUsage("/", falsh_info);
-    // if (ret == -1) {
-    //     LOG_MM_D(MQTT_CLIENT, "GetDiskUsage fail.");
-    // }
-
-    // std::string version;
-    // GetVersion(version);
-
-    // // 云端设备注册
-    // json message = {
-    //     { "authorizationStatus", "已授权"},
-    //     { "deviceIp", szIP },
-    //     { "deviceSymbol", "06C38B59EB2D4B7DB67E56E01228574F" },
-    //     { "memory", memInfo.totalMem },
-    //     { "softwareVersion", AI_BOX_VERSION },
-    //     { "status", "正常" },
-    //     { "storage", falsh_info.total },
-    //     { "systemVersion", version },
-    //     { "tenantId", "1" },
-    // };
-
-    // auto params = message.dump();
-    // std::string res = BoxHttpRequest::Send("post", 
-    //                       "http://192.168.0.196:8010/devices/admin/deviceInfo/save", 
-    //                       "Content-Type: application/json;",
-    //                       params,
-    //                       5000);
-    // LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
 
     return AX_TRUE;
 }
