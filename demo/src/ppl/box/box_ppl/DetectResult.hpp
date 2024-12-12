@@ -53,6 +53,13 @@ typedef struct {
         int status;
     } person_info;
 
+    struct FireSmokeInfo {
+        /**
+        火、烟、其他
+        */
+        int label;
+    } fire_smoke_info;
+
     struct VehicleInfo {
         /*
         车辆类型: 0：UNKNOWN 1：SEDAN 2：SUV 3：BUS 4：MICROBUS 5：TRUCK
