@@ -79,6 +79,7 @@ typedef struct {
 
 typedef struct {
     DETECT_TYPE_E eType;
+    AX_F32 fScore;
     AX_U64 nTrackId;
     AX_SKEL_RECT_T tBox;
     AlgoData data;
