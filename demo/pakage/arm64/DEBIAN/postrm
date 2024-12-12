@@ -1,6 +1,6 @@
 #!/bin/sh
 
-echo "remove yj-aibox-app"
+echo "remove aibox"
 
 systemctl stop yj-aibox
 systemctl disable yj-aibox

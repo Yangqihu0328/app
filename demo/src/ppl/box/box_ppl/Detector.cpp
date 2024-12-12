@@ -118,6 +118,7 @@ AX_VOID CDetector::WorkerThread(AX_U32 nGrd) {
 
                         memcpy(&item.data.face_info, &obj.face_info, sizeof(item.data.face_info));
                         memcpy(&item.data.person_info, &obj.person_info, sizeof(item.data.person_info));
+                        memcpy(&item.data.fire_smoke_info, &obj.fire_smoke_info, sizeof(item.data.fire_smoke_info));
                         memcpy(&item.data.vehicle_info, &obj.vehicle_info, sizeof(item.data.vehicle_info));
 
                         // 提取边界框并校验宽度和高度
@@ -291,7 +292,8 @@ AX_BOOL CDetector::StartId(int id) {
                 continue;
             }
 
-            LOG_M_C(DETECTOR, "model id=%u, model file=%s +++", modelsMap[algo].nModelId, modelsMap[algo].szModelPath);
+            AX_U64 nStartMs = CElapsedTimer::GetInstance()->GetTickCount();
+            LOG_M_E(DETECTOR, "model id=%u, model file=%s +++", modelsMap[algo].nModelId, modelsMap[algo].szModelPath);
 
             ax_algorithm_init_t init_info;
             init_info.model_type = static_cast<ax_model_type_e>(modelsMap[algo].nModelId);
@@ -301,6 +303,10 @@ AX_BOOL CDetector::StartId(int id) {
                 LOG_M_E(DETECTOR, "%s: ax_algorithm_init fail=0x%x", __func__, ret);
                 return AX_FALSE;
             }
+
+            AX_U64 nEndMs = CElapsedTimer::GetInstance()->GetTickCount();
+            LOG_M_E(DETECTOR, "model id=%u, model file=%s, took time=%ldms +++", modelsMap[algo].nModelId, modelsMap[algo].szModelPath,
+                    nEndMs - nStartMs);
 
             // ax_algorithm_save_debug_image(handle_[id][i], false);
         }

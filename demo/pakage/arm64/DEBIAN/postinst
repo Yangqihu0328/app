@@ -1,6 +1,6 @@
 #!/bin/sh
 
-echo "yj-aibox-app installing"
+echo "aibox installing"
 
 systemctl enable yj-aibox
 systemctl start yj-aibox

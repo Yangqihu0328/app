@@ -3,7 +3,7 @@
     "models":[
         {
             "id": 0,
-            "path": "/opt/bin/BoxDemo/models/person20241113.model",
+            "path": "/opt/bin/BoxDemo/models/person20241206npu1.model",
             "name": "人物检测",
             "desc": "人物检测",
             "warning": "识别到人物",
@@ -19,10 +19,18 @@
         },
         {
             "id": 2,
-            "path": "/opt/bin/BoxDemo/models/fr20241126.model",
+            "path": "/opt/bin/BoxDemo/models/fr20241129npu1.model",
             "name": "人脸识别",
             "desc": "人脸识别",
             "warning": "识别到人脸",
+            "version": "1.0.1"
+        },
+        {
+            "id": 3,
+            "path": "/opt/bin/BoxDemo/models/fs20241211npu1.model",
+            "name": "烟火识别",
+            "desc": "烟火识别",
+            "warning": "识别到烟火",
             "version": "1.0.1"
         }
     ]

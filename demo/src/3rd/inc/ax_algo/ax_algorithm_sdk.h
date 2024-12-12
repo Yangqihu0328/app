@@ -8,6 +8,41 @@ extern "C"
 #define AX_ALGORITHM_MAX_OBJ_NUM 32
 #define AX_ALGORITHM_FACE_POINT_LEN 5
 #define AX_ALGORITHM_FACE_FEATURE_LEN 512
+    typedef enum _log_level_e
+    {
+        ax_log_disable = -1,
+        ax_log_emergency = 0,
+        ax_log_alert = 1,
+        ax_log_critical = 2,
+        ax_log_error = 3,
+        ax_log_warn = 4,
+        ax_log_notice = 5,
+        ax_log_info = 6,
+        ax_log_debug = 7,
+        ax_log_all = 8,
+    } ax_log_level_e;
+
+    typedef enum _error_code_e
+    {
+        ax_error_code_fail = -1,
+        ax_error_code_success = 0,
+
+        ax_error_code_init_fail = 0x10000,
+        ax_error_code_init_bsp_fail,
+        ax_error_code_init_license_fail,
+        ax_error_code_init_model_fail,
+
+        ax_error_code_run_fail = 0x20000,
+        ax_error_code_run_det_fail,
+        ax_error_code_run_roi_fail,
+        ax_error_code_run_crop_fail,
+        ax_error_code_run_align_fail,
+        ax_error_code_run_quality_fail,
+        ax_error_code_run_recog_fail,
+        ax_error_code_run_invalid_index,
+        ax_error_code_run_type_not_match,
+    } ax_error_code_e;
+
     typedef enum _color_space_e
     {
         ax_color_space_unknown,
@@ -44,9 +79,44 @@ extern "C"
         ax_model_type_person,
         ax_model_type_lpr,
         ax_model_type_face_recognition,
-        ax_model_type_smoke_and_fire,
+        ax_model_type_fire_smoke,
         ax_model_type_end
     } ax_model_type_e;
+
+    typedef struct _body_attr_t
+    {
+        /**
+         * track_id: 人体跟踪ID,用作历史状态跟踪，如果设置成 0，则不跟踪，只输出当前图像推理结果
+         */
+        unsigned long int track_id;
+
+        unsigned char isHuman;          // ["Uncertain", "Normal", "Abnormal"]
+        unsigned char age;              // ["Uncertain", "Toddler", "Teenager", "Youth", "Middle-aged", "Elderly"]
+        unsigned char gender;           // ["Uncertain", "Male", "Female"]
+        unsigned char race;             // ["Uncertain", "East Asia", "Caucasian", "African", "South Asia"]
+        unsigned char umbrella;         // ["Uncertain", "No", "Yes"]
+        unsigned char headwear;         // ["Uncertain", "No", "hat", "Helmet"]
+        unsigned char glasses;          // ["Uncertain", "No", "Glasses", "Sunglasses"]
+        unsigned char faceMask;         // ["Uncertain", "No", "Yes"]
+        unsigned char smoke;            // ["Uncertain", "No", "Yes"]
+        unsigned char carryingItem;     // ["Uncertain", "No", "Yes"]
+        unsigned char cellphone;        // ["Uncertain", "No", "Yes"]
+        unsigned char safetyClothing;   // ["Uncertain", "No", "Yes"]
+        unsigned char upperWear;        // ["Uncertain", "Long-sleeve", "Short-sleeve"]
+        unsigned char upperColor;       // ["Uncertain", "Red", "Orange", "Yellow", "Green", "Blue", "Purple", "Pink", "Black", "White", "Gray", "Brown"]
+        unsigned char upperWearFg;      // ["Uncertain", "T-shirt", "Sleeveless Top", "Shirt", "Suit", "Sweater", "Jacket", "Down Jacket", "Trench Coat", "Coat"]
+        unsigned char upperWearTexture; // ["Uncertain", "Solid Color", "Pattern", "Small Floral", "Stripes or Plaid"]
+        unsigned char bag;              // ["Uncertain", "No", "Crossbody Bag", "Backpack"]
+        unsigned char safetyRope;       // ["Uncertain", "No", "Yes"]
+        unsigned char upperCut;         // ["Uncertain", "No", "Yes"]
+        unsigned char lowerWear;        // ["Uncertain", "Long Pants", "Shorts", "Long Dress", "Short Skirt"]
+        unsigned char lowerColor;       // ["Uncertain", "Red", "Orange", "Yellow", "Green", "Blue", "Purple", "Pink", "Black", "White", "Gray", "Brown"]
+        unsigned char vehicle;          // ["Uncertain", "No", "Motorcycle", "Bicycle", "Tricycle"]
+        unsigned char lowerCut;         // ["Uncertain", "No", "Yes"]
+        unsigned char occlusion;        // ["Uncertain", "No", "Mild Occlusion", "Heavy Occlusion"]
+        unsigned char orientation;      // ["Uncertain", "Front", "Back", "Right Side", "Left Side"]
+    } ax_body_attr_t;
+
     typedef struct _result_t
     {
         ax_model_type_e model_type;
@@ -76,6 +146,14 @@ extern "C"
 
             struct
             {
+                /**
+                火、烟、其他
+                */
+                int label;
+            } fire_smoke_info;
+
+            struct
+            {
                 /*
                 车辆类型: 0：UNKNOWN 1：SEDAN 2：SUV 3：BUS 4：MICROBUS 5：TRUCK
                 */
@@ -95,12 +173,46 @@ extern "C"
         int n_objects;
     } ax_result_t;
 
+    typedef struct _algorithm_param_t
+    {
+        struct
+        {
+            /**
+             *  det_threshold: 人脸检测阈值，0-1之间
+             *  quality_threshold: 人脸质量评分阈值，0-1之间
+             */
+            float det_threshold;
+            float quality_threshold;
+        } face_param;
+        struct
+        {
+            /**
+             *  det_threshold: 人体检测阈值，0-1之间
+             */
+            float det_threshold;
+        } person_param;
+        struct
+        {
+            /**
+             *  det_threshold: 车辆检测阈值，0-1之间
+             *  lpr_threshold: 车牌识别阈值，0-1之间
+             */
+            float det_threshold;
+            float lpr_threshold;
+        } vehicle_param;
+        struct
+        {
+            float det_threshold;
+        } fire_smoke_param;
+    } ax_algorithm_param_t;
+
     typedef void *ax_algorithm_handle_t;
 
     typedef struct _algorithm_init_t
     {
         char model_file[256];
         ax_model_type_e model_type;
+        ax_algorithm_param_t param;
     } ax_algorithm_init_t;
 
     int ax_algorithm_init(ax_algorithm_init_t *init_info, ax_algorithm_handle_t *handle);
@@ -108,6 +220,16 @@ extern "C"
     int ax_algorithm_inference(ax_algorithm_handle_t handle, ax_image_t *image, ax_result_t *result);
 
     ax_model_type_e ax_algorithm_get_model_type(ax_algorithm_handle_t handle);
+
+    ax_algorithm_param_t ax_algorithm_get_param(ax_algorithm_handle_t handle);
+    void ax_algorithm_set_param(ax_algorithm_handle_t handle, ax_algorithm_param_t *param);
+    ax_algorithm_param_t ax_algorithm_get_default_param();
+
+    /**
+     * @brief: set log level
+     * @param[in] level: small than level will be print, large than level will be ignored
+     */
+    void ax_algorithm_set_log_level(ax_log_level_e level);
 
     /**
      * @brief: save debug image
@@ -121,9 +243,19 @@ extern "C"
      * @param[in] plate_id: plate_id array
      * @param[in] len: length of plate_id array
      * @param[out] plate_str: string of plate_id
-     * @return 0 success, -1 failed
+     * @return 0 success, non-zero on failure.
      */
     int ax_algorithm_get_plate_str(int *plate_id, int len, char *plate_str);
+
+    /**
+    @brief: get the body attribute of the detected person
+    @param[in] handle: algorithm handle
+    @param[in] image: image data
+    @param[in] bbox: bounding box of the detected person
+    @param[out] body_attr: body attribute of the detected person
+    @return 0 success, non-zero on failure.
+    */
+    int ax_algorithm_get_body_attr(ax_algorithm_handle_t handle, ax_image_t *image, ax_bbox_t *bbox, ax_body_attr_t *body_attr);
 
     /**
     @brief: get the 512-dim feature of the detected face
@@ -134,7 +266,7 @@ extern "C"
                     if idx is -1, then it means no face is detected,
                     this function will auto detect face in the single image and get the feature, but no track
     @param[out] feature: 512-dim feature of the detected face
-    @return 0 success, -1 failed
+    @return 0 success, non-zero on failure.
     */
     int ax_algorithm_get_face_feature(ax_algorithm_handle_t handle, ax_image_t *image, ax_result_t *result, int idx, float feature[AX_ALGORITHM_FACE_FEATURE_LEN]);
 
