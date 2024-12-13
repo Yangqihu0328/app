@@ -57,18 +57,17 @@ typedef struct {
 typedef struct {
     AX_S32 version;
 
-    std::string localTopic;
-    std::string localHostname;
-    std::string localName;
-    std::string localPasswd;
-    AX_S32 localPort;
+    std::string topic;
+    std::string hostname;
+    std::string name;
+    std::string passwd;
+    AX_S32 port;
 
-    AX_BOOL cloudEnable;
-    std::string cloudTopic;
-    std::string cloudHostname;
-    std::string cloudName;
-    std::string cloudPasswd;
-    AX_S32 cloudPort;
+    std::string address;
+    std::string accessKey;
+    std::string secretKey;
+    std::string username;
+    std::string userpasswd;
 } MQTT_CONFIG_T;
 
 typedef struct {
@@ -124,15 +123,14 @@ public:
     AX_BOOL Init(AX_VOID);
 
     MQTT_CONFIG_T GetMqttConfig(AX_VOID);
+    AX_BOOL SetMqttConfig(const std::string& address, const std::string& accessKey, const std::string& secretKey);
+    
     STREAM_CONFIG_T GetStreamConfig(AX_VOID);
     DETECT_CONFIG_T GetDetectConfig(AX_VOID);
     DISPVO_CONFIG_T GetDispVoConfig(const std::string &SECT);
     VENC_CONFIG_T GetVencConfig(AX_VOID);
     COMPRESS_CONFIG_T GetCompressConfig(AX_VOID);
     UT_CONFIG_T GetUTConfig(AX_VOID);
-
-    AX_BOOL AddAlgoTask(AX_S32 channelId, std::vector<int> &task_vec);
-    AX_BOOL RemoveAlgoTask(AX_S32 channelId);
 
     AX_BOOL SetAudioValue(AX_S32 nValue);
     AX_BOOL SetWindowValue(AX_S32 nValue);

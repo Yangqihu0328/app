@@ -345,8 +345,6 @@ protected:
 
 	std::string local_topic_;
 
-    AX_BOOL cloud_enable_{AX_FALSE};
-
     CAXThread local_work_thread_;
     CAXThread cloud_work_thread_;
 };

@@ -336,7 +336,7 @@ AX_VOID CDispatcher::DrawBox(const CAXFrame& axFrame, const DETECT_RESULT_T& fhv
 #endif
         // PRINT_ELAPSED_USEC("cpu draw rect");
         AX_CHAR track_id[32] = {0};
-        snprintf(track_id, sizeof(track_id), "TRACK:%02lld ", fhvp.item[i].nTrackId);
+        snprintf(track_id, sizeof(track_id), "TRACK:%02lld SCORE:%.2f", fhvp.item[i].nTrackId, fhvp.item[i].fScore);
         m_font.FillString(track_id, rc.nX, rc.nY, &yuv, canvas.nW, canvas.nH);
     }
     

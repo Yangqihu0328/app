@@ -148,20 +148,41 @@ MQTT_CONFIG_T CBoxConfig::GetMqttConfig(AX_VOID) {
 
     conf.version = m_Ini.GetIntValue(SECT, "version", 3);
 
-    conf.localTopic = m_Ini.GetStringValue(SECT, "local topic", "boxMessage");
-    conf.localHostname = m_Ini.GetStringValue(SECT, "local hostname", "127.0.0.1");
-    conf.localName = m_Ini.GetStringValue(SECT, "local name", "yunji");
-    conf.localPasswd = m_Ini.GetStringValue(SECT, "local passwd", "yunji123456");
-    conf.localPort = m_Ini.GetIntValue(SECT, "local port", 1883);
+    conf.topic = m_Ini.GetStringValue(SECT, "topic", "boxMessage");
+    conf.hostname = m_Ini.GetStringValue(SECT, "hostname", "127.0.0.1");
+    conf.name = m_Ini.GetStringValue(SECT, "name", "yunji");
+    conf.passwd = m_Ini.GetStringValue(SECT, "passwd", "yunji123456");
+    conf.port = m_Ini.GetIntValue(SECT, "port", 1883);
 
-    conf.cloudEnable = (AX_BOOL)m_Ini.GetIntValue(SECT, "cloud enable", 0);
-    conf.cloudTopic = m_Ini.GetStringValue(SECT, "cloud topic", "cloudMessage");
-    conf.cloudHostname = m_Ini.GetStringValue(SECT, "cloud hostname", "127.0.0.1");
-    conf.cloudName = m_Ini.GetStringValue(SECT, "cloud name", "admin");
-    conf.cloudPasswd = m_Ini.GetStringValue(SECT, "cloud passwd", "admin");
-    conf.cloudPort = m_Ini.GetIntValue(SECT, "cloud port", 10005);
+    conf.address = m_Ini.GetStringValue(SECT, "address", "");
+    conf.accessKey = m_Ini.GetStringValue(SECT, "accessKey", "");
+    conf.secretKey = m_Ini.GetStringValue(SECT, "secretKey", "");
+    conf.username = m_Ini.GetStringValue(SECT, "username", "admin");
+    conf.userpasswd = m_Ini.GetStringValue(SECT, "userpasswd", "admin");
 
     return conf;
+}
+
+AX_BOOL CBoxConfig::SetMqttConfig(const std::string& address, const std::string& accessKey, const std::string& secretKey) {
+    AX_BOOL ret;
+    const AX_CHAR *SECT = "MQTT";
+
+    ret = m_Ini.SetStringValue(SECT, "address", address);
+    if (!ret) {
+        return ret;
+    }
+
+    ret = m_Ini.SetStringValue(SECT, "accessKey", accessKey);
+    if (!ret) {
+        return ret;
+    }
+
+    ret = m_Ini.SetStringValue(SECT, "secretKey", secretKey);
+    if (!ret) {
+        return ret;
+    }
+
+    return ret;
 }
 
 DISPVO_CONFIG_T CBoxConfig::GetDispVoConfig(const std::string &SECT) {
@@ -261,46 +282,6 @@ UT_CONFIG_T CBoxConfig::GetUTConfig(AX_VOID) {
     conf.nMaxSendNaluIntervalMilliseconds = m_Ini.GetIntValue(SECT, "PlaybackMaxSendNaluIntervalMilliseconds", 0);
 
     return conf;
-}
-
-AX_BOOL CBoxConfig::AddAlgoTask(AX_S32 channelId, std::vector<int> &task_vec) {
-    AX_BOOL bRet = AX_FALSE;
-    const AX_CHAR *SECT = "DETECT";
-
-    do {
-        AX_CHAR szKey[32];
-        sprintf(szKey, "channel_%02d", channelId);
-
-        std::ostringstream oss; // 用于构建字符串
-        oss << "["; // 开始方括号
-
-        // 将 vector 中的数字添加到字符串流
-        for (size_t i = 0; i < task_vec.size(); ++i) {
-            oss << task_vec[i];
-            if (i < task_vec.size() - 1) {
-                oss << ", "; // 添加逗号和空格
-            }
-        }
-
-        // 默认为带跟踪算法和使用STD的NPU
-        oss << ", 1, 0]"; // 结束方括号
-        printf("update channel: %s to %s\n", szKey, oss.str().c_str());
-        m_Ini.SetStringValue(SECT, szKey, oss.str());
-    } while (0);
-
-    return bRet;
-}
-
-AX_BOOL CBoxConfig::RemoveAlgoTask(AX_S32 channelId) {
-    const AX_CHAR *SECT = "DETECT";
-
-    do {
-        AX_CHAR szKey[32];
-        sprintf(szKey, "channel%02d", channelId);
-        m_Ini.DeleteValue(SECT, szKey);
-    } while (0);
-
-    return AX_TRUE;
 }
 
 AX_BOOL CBoxConfig::SetIntValue(const std::string &SECT, const std::string &Key, AX_S32 nValue) {

@@ -114,6 +114,7 @@ AX_VOID CDetector::WorkerThread(AX_U32 nGrd) {
                         auto &tBox = item.tBox;
 
                         item.eType = static_cast<DETECT_TYPE_E>(result.nAlgoType);
+                        item.fScore = obj.score;
                         item.nTrackId = obj.track_id;
 
                         memcpy(&item.data.face_info, &obj.face_info, sizeof(item.data.face_info));
@@ -208,6 +209,7 @@ AX_BOOL CDetector::Init(const DETECTOR_ATTR_T &stAttr) {
             ax_algorithm_init_t init_info;
             init_info.model_type = static_cast<ax_model_type_e>(modelsMap[algo].nModelId);
             strcpy(init_info.model_file, modelsMap[algo].szModelPath);
+            init_info.param = ax_algorithm_get_default_param();
             int ret = ax_algorithm_init(&init_info, &handle_[nChn][i]);
             if (ret != 0) {
                 LOG_M_E(DETECTOR, "%s: ax_algorithm_init fail=0x%x", __func__, ret);
@@ -298,6 +300,7 @@ AX_BOOL CDetector::StartId(int id) {
             ax_algorithm_init_t init_info;
             init_info.model_type = static_cast<ax_model_type_e>(modelsMap[algo].nModelId);
             strcpy(init_info.model_file, modelsMap[algo].szModelPath);
+            init_info.param = ax_algorithm_get_default_param();
             int ret = ax_algorithm_init(&init_info, &handle_[id][i]);
             if (ret != 0) {
                 LOG_M_E(DETECTOR, "%s: ax_algorithm_init fail=0x%x", __func__, ret);
