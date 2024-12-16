@@ -1582,8 +1582,8 @@ static void OnGetAlarmStatus(bool local) {
     SendMsg(payload.c_str(), payload.size(), local);
 }
 
-static AX_VOID removeJpgFile(AX_BOOL isDir, nlohmann::json fileUrls, bool local) {
-    printf("removeJpgFile ++++\n");
+static AX_VOID OnRemoveJpgFile(AX_BOOL isDir, nlohmann::json fileUrls, bool local) {
+    LOG_M_C(MQTT_CLIENT, "OnRemoveJpgFile ++++.");
 
     json root, child;
 
@@ -1613,7 +1613,7 @@ static AX_VOID removeJpgFile(AX_BOOL isDir, nlohmann::json fileUrls, bool local)
     std::string payload = root.dump();
     SendMsg(payload.c_str(), payload.size(), local);
 
-    printf("removeJpgFile ----\n");
+    LOG_M_C(MQTT_CLIENT, "OnRemoveJpgFile ----.");
 }
 
 static AX_VOID OnGetConnectionSettings(bool local) {
@@ -1737,10 +1737,10 @@ static void MQTTCloudMessage(MQTT::MessageData& md) {
     } else if (type == "getAlarmStatus") { // 获取告警配置
         OnGetAlarmStatus(false);
     } else if (type == "clearAllJpg") { // 删除所有图片
-        removeJpgFile(AX_TRUE, NULL, false);
+        OnRemoveJpgFile(AX_TRUE, NULL, false);
     } else if (type == "clearJpgFiles") { // 删除指定图片
         nlohmann::json fileUrls = jsonRes["fileUrls"];
-        removeJpgFile(AX_FALSE, fileUrls, false);
+        OnRemoveJpgFile(AX_FALSE, fileUrls, false);
     }
 
     LOG_MM_D(MQTT_CLIENT,"MQTTCloudMessage ----\n");
@@ -1764,7 +1764,7 @@ static bool ConnectCloudMQTT() {
             std::string res = BoxHttpRequest::Send("get", url, "Content-Type: application/json;", "", 5000);
             LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
 
-            bool success = AX_FALSE;
+            bool success = false;
             nlohmann::json jsonRes;
             try {
                 jsonRes = nlohmann::json::parse(res);
@@ -2009,10 +2009,10 @@ static void MQTTLocalMessage(MQTT::MessageData& md) {
     } else if (type == "getAlarmStatus") { // 获取告警配置
         OnGetAlarmStatus(true);
     } else if (type == "clearAllJpg") { // 删除所有图片
-        removeJpgFile(AX_TRUE, NULL, true);
+        OnRemoveJpgFile(AX_TRUE, NULL, true);
     } else if (type == "clearJpgFiles") { // 删除指定图片
         nlohmann::json fileUrls = jsonRes["fileUrls"];
-        removeJpgFile(AX_FALSE, fileUrls, true);
+        OnRemoveJpgFile(AX_FALSE, fileUrls, true);
     } else if (type == "getConnectionSettings") {
         OnGetConnectionSettings(true);
     } else if (type == "setConnectionSettings") {
@@ -2104,7 +2104,9 @@ AX_BOOL MqttClient::Init(MQTT_CONFIG_T &mqtt_config) {
     if (mqtt_config.address != "" && 
         mqtt_config.accessKey != "" && 
         mqtt_config.secretKey != "") {
-        ConnectCloudMQTT();
+        if (!ConnectCloudMQTT()) {
+            LOG_M_E(MQTT_CLIENT, "connect to cloud mqtt failed.");
+        }
     }
 
     return AX_TRUE;
