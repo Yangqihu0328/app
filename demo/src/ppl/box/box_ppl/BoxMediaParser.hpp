@@ -18,6 +18,7 @@ typedef struct {
     AX_U32 nTaskId;
     AX_U32 nTaskDelete;
     AX_U32 nTaskStatus; // 0未运行 1运行中
+    char szTaskWebId[32];
     char szPushUrl[128];
     char szTaskName[32];
     char szTaskDesc[256];
@@ -29,6 +30,7 @@ typedef struct {
     AX_U32 nMediaId;
     AX_U32 nMediaDelete;
     AX_U32 nMediaStatus; // 0异常 1正常/未使用 2使用中
+    char szMediaWebId[32];
     char szMediaUrl[128];
     char szMediaName[32];
     char szMediaDesc[256];

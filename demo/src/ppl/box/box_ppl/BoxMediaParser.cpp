@@ -83,6 +83,9 @@ std::vector<MEDIA_INFO_T> CBoxMediaParser::GetMediasMap(AX_U32 *nMediaCnt, const
                     if (!GET_VALUE(device_value, "id", dValue)) break;
                     devInfo.nMediaId = dValue;
 
+                    if (!GET_VALUE(device_value, "webid", strValue)) break;
+                    strcpy(devInfo.szMediaWebId, strValue.c_str());
+
                     if (!GET_VALUE(device_value, "delete", dValue)) break;
                     devInfo.nMediaDelete = dValue;
 
@@ -102,6 +105,9 @@ std::vector<MEDIA_INFO_T> CBoxMediaParser::GetMediasMap(AX_U32 *nMediaCnt, const
                     auto valueTask = device_value.get<picojson::object>()["task"];
                     if (!GET_VALUE(valueTask, "id", dValue)) break;
                     devInfo.taskInfo.nTaskId = dValue;
+
+                    if (!GET_VALUE(valueTask, "webid", strValue)) break;
+                    strcpy(devInfo.taskInfo.szTaskWebId, strValue.c_str());
 
                     if (!GET_VALUE(valueTask, "delete", dValue)) break;
                     devInfo.taskInfo.nTaskDelete = dValue;
@@ -153,6 +159,7 @@ AX_BOOL CBoxMediaParser::SetMediasMap(std::vector<MEDIA_INFO_T>& vecMedia) {
             objDev["id"] = picojson::value((double)info.nMediaId);
             objDev["delete"] = picojson::value((double)info.nMediaDelete);
             objDev["status"] = picojson::value((double)info.nMediaStatus);
+            objDev["webid"] = picojson::value(string(info.szMediaWebId));
             objDev["url"] = picojson::value(string(info.szMediaUrl));
             objDev["name"] = picojson::value(string(info.szMediaName));
             objDev["desc"] = picojson::value(string(info.szMediaDesc));
@@ -161,6 +168,7 @@ AX_BOOL CBoxMediaParser::SetMediasMap(std::vector<MEDIA_INFO_T>& vecMedia) {
             objTask["id"] = picojson::value((double)info.taskInfo.nTaskId);
             objTask["delete"] = picojson::value((double)info.taskInfo.nTaskDelete);
             objTask["status"] = picojson::value((double)info.taskInfo.nTaskStatus);
+            objTask["webid"] = picojson::value(string(info.taskInfo.szTaskWebId));
             objTask["url"] = picojson::value(string(info.taskInfo.szPushUrl));
             objTask["name"] = picojson::value(string(info.taskInfo.szTaskName));
             objTask["desc"] = picojson::value(string(info.taskInfo.szTaskDesc));
