@@ -209,7 +209,8 @@ AX_BOOL CDetector::Init(const DETECTOR_ATTR_T &stAttr) {
             ax_algorithm_init_t init_info;
             init_info.model_type = static_cast<ax_model_type_e>(modelsMap[algo].nModelId);
             strcpy(init_info.model_file, modelsMap[algo].szModelPath);
-            sprintf(init_info.license_path, "/opt/bin/BoxDemo/ax_algorithm_license/");
+            std::string cur_dir = GetCurrentDir();
+            strcpy(init_info.license_path, cur_dir.c_str());
             init_info.param = ax_algorithm_get_default_param();
             int ret = ax_algorithm_init(&init_info, &handle_[nChn][i]);
             if (ret != 0) {
@@ -301,7 +302,8 @@ AX_BOOL CDetector::StartId(int id) {
             ax_algorithm_init_t init_info;
             init_info.model_type = static_cast<ax_model_type_e>(modelsMap[algo].nModelId);
             strcpy(init_info.model_file, modelsMap[algo].szModelPath);
-            sprintf(init_info.license_path, "/opt/bin/BoxDemo/ax_algorithm_license/");
+            std::string cur_dir = GetCurrentDir();
+            strcpy(init_info.license_path, cur_dir.c_str());
             init_info.param = ax_algorithm_get_default_param();
             int ret = ax_algorithm_init(&init_info, &handle_[id][i]);
             if (ret != 0) {
@@ -431,6 +433,21 @@ AX_VOID CDetector::ClearQueue(AX_S32 nGrp) {
         }
     }
 }
+
+std::string CDetector::GetCurrentDir() {
+    string strPath;
+    AX_CHAR szPath[260] = {0};
+    ssize_t sz = readlink("/proc/self/exe", szPath, sizeof(szPath));
+    if (sz <= 0) {
+        strPath = "./";
+    } else {
+        strPath = szPath;
+        strPath = strPath.substr(0, strPath.rfind('/') + 1);
+    }
+
+    return strPath;
+}
+
 #else
 //同一帧被多个算法推理是正常情况。那么推理的结果应该都是存在同一个结果里面。
 //考虑的问题，检测的框要一直存在，但是检测结果不要一直送。
