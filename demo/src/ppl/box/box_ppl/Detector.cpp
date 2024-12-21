@@ -95,10 +95,10 @@ AX_VOID CDetector::WorkerThread(AX_U32 nGrd) {
                     // AX_U64 nStartMs = CElapsedTimer::GetInstance()->GetTickCount();
 
                     ax_result_t forward_result;
-                    ax_algorithm_inference(handle_[nGrd][index], &ax_image, &forward_result);
+                    ax_algorithm_track(handle_[nGrd][index], &ax_image, &forward_result);
 
                     // AX_U64 nEndMs = CElapsedTimer::GetInstance()->GetTickCount();
-                    // LOG_M_E(DETECTOR, "ax_algorithm_inference model id=%u, took time=%ldms +++", index, nEndMs - nStartMs);
+                    // LOG_M_E(DETECTOR, "ax_algorithm_track model id=%u, took time=%ldms +++", index, nEndMs - nStartMs);
 
                     DETECT_RESULT_T result;
                     result.nW = frame_info.u32Width;
@@ -209,6 +209,7 @@ AX_BOOL CDetector::Init(const DETECTOR_ATTR_T &stAttr) {
             ax_algorithm_init_t init_info;
             init_info.model_type = static_cast<ax_model_type_e>(modelsMap[algo].nModelId);
             strcpy(init_info.model_file, modelsMap[algo].szModelPath);
+            sprintf(init_info.license_path, "/opt/bin/BoxDemo/ax_algorithm_license/");
             init_info.param = ax_algorithm_get_default_param();
             int ret = ax_algorithm_init(&init_info, &handle_[nChn][i]);
             if (ret != 0) {
@@ -300,6 +301,7 @@ AX_BOOL CDetector::StartId(int id) {
             ax_algorithm_init_t init_info;
             init_info.model_type = static_cast<ax_model_type_e>(modelsMap[algo].nModelId);
             strcpy(init_info.model_file, modelsMap[algo].szModelPath);
+            sprintf(init_info.license_path, "/opt/bin/BoxDemo/ax_algorithm_license/");
             init_info.param = ax_algorithm_get_default_param();
             int ret = ax_algorithm_init(&init_info, &handle_[id][i]);
             if (ret != 0) {

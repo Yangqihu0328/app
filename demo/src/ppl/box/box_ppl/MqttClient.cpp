@@ -32,6 +32,10 @@ namespace boxconf {
 #define ZLM_API_URL "http://" ZLM_IP ":80"
 #define ZLM_SECRET  "81DBE7AF-ACD5-47D8-A692-F4B27456E6FD"
 
+#define ZLM_ONLINE_IP      "43.139.241.83"
+#define ZLM_ONLINE_API_URL "http://" ZLM_ONLINE_IP ":8080"
+#define ZLM_ONLINE_SECRET  "81DBE7AF-ACD5-47D8-A692-F4B27456E6FD"
+
 #define ALARM_IMG_PATH "ZLMediaKit/www/alarm"
 
 #define AI_BOX_VERSION "1.0.4"
@@ -52,6 +56,7 @@ static std::shared_ptr<IPStack> local_ipstack_ = nullptr;
 static std::shared_ptr<MQTT::Client<IPStack, Countdown>> local_client_ = nullptr;
 
 static std::string cloud_topic_;
+static std::string cloud_tenant_id_;
 static std::shared_ptr<IPStack> cloud_ipstack_ = nullptr;
 static std::shared_ptr<MQTT::Client<IPStack, Countdown>> cloud_client_ = nullptr;
 static bool cloud_mqtt_connected_ = false;
@@ -673,6 +678,7 @@ static void OnGetMediaChannelList(bool local) {
             {"mediaId",     mediasMap[i].nMediaId},
             {"mediaDelete", mediasMap[i].nMediaDelete},
             {"mediaStatus", mediasMap[i].nMediaStatus},
+            {"mediaWebId",  mediasMap[i].szMediaWebId},
             {"mediaUrl",    mediasMap[i].szMediaUrl},
             {"mediaName",   mediasMap[i].szMediaName},
             {"mediaDesc",   mediasMap[i].szMediaDesc}
@@ -694,7 +700,7 @@ static void OnGetMediaChannelList(bool local) {
     LOG_M_C(MQTT_CLIENT, "OnGetMediaChannelList ----.");
 }
 
-static void OnSetMediaChannelInfo(AX_U32 id, const std::string& mediaUrl, const std::string& mediaName, const std::string& mediaDesc, bool local) {
+static void OnSetMediaChannelInfo(AX_U32 id, const std::string& mediaWebId, const std::string& mediaUrl, const std::string& mediaName, const std::string& mediaDesc, bool local) {
     LOG_M_C(MQTT_CLIENT, "OnSetMediaChannelInfo ++++.");
 
     AX_U32 status = check_RTSP_stream(mediaUrl) ? 1 : 0;
@@ -710,9 +716,10 @@ static void OnSetMediaChannelInfo(AX_U32 id, const std::string& mediaUrl, const 
         mediasMap[id].nMediaId = id;
         mediasMap[id].nMediaDelete = 0;
         mediasMap[id].nMediaStatus = status;  // 0异常 1正常/未使用 2使用中
-        strcpy(mediasMap[id].szMediaUrl, mediaUrl.c_str());
-        strcpy(mediasMap[id].szMediaName, mediaName.c_str());
-        strcpy(mediasMap[id].szMediaDesc, mediaDesc.c_str());
+        strcpy(mediasMap[id].szMediaWebId, mediaWebId.c_str());
+        strcpy(mediasMap[id].szMediaUrl,   mediaUrl.c_str());
+        strcpy(mediasMap[id].szMediaName,  mediaName.c_str());
+        strcpy(mediasMap[id].szMediaDesc,  mediaDesc.c_str());
 
         // 更新配置
         CBoxMediaParser::GetInstance()->SetMediasMap(mediasMap);
@@ -748,6 +755,7 @@ static void OnDelMediaChannelInfo(AX_U32 id, bool local) {
 
     if (id < (AX_U32)mediasMap.size()) {
         mediasMap[id].nMediaDelete = 1;
+        memset(mediasMap[id].szMediaWebId, 0, sizeof(mediasMap[id].szMediaWebId));
 
         // 更新配置
         CBoxMediaParser::GetInstance()->SetMediasMap(mediasMap);
@@ -766,7 +774,7 @@ static void OnDelMediaChannelInfo(AX_U32 id, bool local) {
 
     std::string payload = root.dump();
     SendMsg(payload.c_str(), payload.size(), local);
-
+        
     LOG_M_C(MQTT_CLIENT, "OnDelMediaChannelInfo ----.");
 }
 
@@ -820,6 +828,7 @@ static void OnGetAlgoTaskList(bool local) {
         leaf["mediaUrl"]    = mediasMap[i].szMediaUrl;
         leaf["taskDelete"]  = mediasMap[i].taskInfo.nTaskDelete;
         leaf["taskStatus"]  = mediasMap[i].taskInfo.nTaskStatus;
+        leaf["taskWebId"]   = mediasMap[i].taskInfo.szTaskWebId;
         leaf["taskPushUrl"] = mediasMap[i].taskInfo.szPushUrl;
         leaf["taskName"]    = mediasMap[i].taskInfo.szTaskName;
         leaf["taskDesc"]    = mediasMap[i].taskInfo.szTaskDesc;
@@ -848,7 +857,7 @@ static void OnGetAlgoTaskList(bool local) {
     LOG_M_C(MQTT_CLIENT, "OnGetAlgoTaskList ----.");
 }
 
-static void OnSetAlgoTaskInfo(AX_U32 id, const std::string &pushUrl, const std::string &taskName, const std::string &taskDesc,
+static void OnSetAlgoTaskInfo(AX_U32 id, const std::string &taskWebId, const std::string &pushUrl, const std::string &taskName, const std::string &taskDesc,
                               std::vector<AX_U32> vAlgo, bool local) {
     LOG_M_C(MQTT_CLIENT, "OnSetAlgoTaskInfo ++++.");
 
@@ -863,6 +872,7 @@ static void OnSetAlgoTaskInfo(AX_U32 id, const std::string &pushUrl, const std::
         mediasMap[id].nMediaStatus = 2; // 0异常 1正常/未使用 2使用中
         mediasMap[id].taskInfo.nTaskDelete = 0;
         mediasMap[id].taskInfo.nTaskStatus = 0; // 0未运行 1运行中
+        strcpy(mediasMap[id].taskInfo.szTaskWebId, taskWebId.c_str());
         strcpy(mediasMap[id].taskInfo.szPushUrl, pushUrl.c_str());
         strcpy(mediasMap[id].taskInfo.szTaskName, taskName.c_str());
         strcpy(mediasMap[id].taskInfo.szTaskDesc, taskDesc.c_str());
@@ -912,8 +922,20 @@ static void OnDelAlgoTaskInfo(AX_U32 id, bool local) {
         StreamQueue.push({ContrlCmd::RemoveAlgo, id});
         lock.unlock();
 
+        if (local && cloud_mqtt_connected_) {
+            std::string host = SERVER_URL;
+            std::string api = "/devices/admin/deviceTask/delete/";
+            std::string params = mediasMap[id].taskInfo.szTaskWebId;
+            std::string url = host + api + params;
+            LOG_M_C(MQTT_CLIENT, "request url: %s", url.c_str());
+            std::string res = BoxHttpRequest::Send("delete", url, "Content-Type: application/json;", "", 5000);
+            LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
+        }
+
         // 更新配置
         CBoxMediaParser::GetInstance()->SetMediasMap(mediasMap);
+
+        memset(mediasMap[id].taskInfo.szTaskWebId, 0, sizeof(mediasMap[id].taskInfo.szTaskWebId));
 
         root["result"] = 0;
         root["msg"] = "操作成功";
@@ -962,8 +984,8 @@ static std::string UrlEncode(const std::string& input) {
 }
 #endif
 
-static AX_BOOL StartPreview(AX_U32 id) {
-    LOG_M_C(MQTT_CLIENT, "StartPreview ++++.");
+static AX_BOOL SartLocalPreview(AX_U32 id) {
+    LOG_M_C(MQTT_CLIENT, "SartLocalPreview ++++.");
 
     // 获取当前通道信息
     AX_U32 nMediaCnt = 0;
@@ -1037,13 +1059,13 @@ static AX_BOOL StartPreview(AX_U32 id) {
         return AX_TRUE;
     }
 
-    LOG_M_C(MQTT_CLIENT, "StartPreview ----.");
+    LOG_M_C(MQTT_CLIENT, "SartLocalPreview ----.");
 
     return AX_FALSE;
 }
 
-static AX_BOOL StopPreview(AX_U32 id, AX_U32 controlCommand) {
-    LOG_M_C(MQTT_CLIENT, "StopPreview ++++.");
+static AX_BOOL StopLocalPreview(AX_U32 id, AX_U32 controlCommand) {
+    LOG_M_C(MQTT_CLIENT, "StopLocalPreview ++++.");
 
     // 获取当前通道信息
     AX_U32 nMediaCnt = 0;
@@ -1083,11 +1105,135 @@ static AX_BOOL StopPreview(AX_U32 id, AX_U32 controlCommand) {
         return AX_TRUE;
     }
 
-    LOG_M_C(MQTT_CLIENT, "StopPreview ----.");
+    LOG_M_C(MQTT_CLIENT, "StopLocalPreview ----.");
+
+    return AX_FALSE;
+}
+#if 0
+static AX_BOOL StartOnlinePreview(AX_U32 id) {
+    LOG_M_C(MQTT_CLIENT, "StartOnlinePreview ++++.");
+
+    // 获取当前通道信息
+    AX_U32 nMediaCnt = 0;
+    STREAM_CONFIG_T streamConfig = CBoxConfig::GetInstance()->GetStreamConfig();
+    std::vector<MEDIA_INFO_T> mediasMap = CBoxMediaParser::GetInstance()->GetMediasMap(&nMediaCnt, streamConfig.strMediaPath);
+
+    if (id < (AX_U32)mediasMap.size()) {
+
+        if (!check_RTSP_stream(mediasMap[id].szMediaUrl)) {
+            return AX_FALSE;
+        }
+
+        std::string key;
+        AX_CHAR temp[256] = {0};
+        AX_CHAR mediaPushUrl[128] = {0};
+
+        sprintf(mediaPushUrl, "rtsp://%s:8554/live/rtpstream%d", ZLM_ONLINE_IP, id);
+        sprintf(temp, "?secret=%s&schema=rtsp&vhost=%s&app=%s&stream=rtpstream%d&dst_url=%s", ZLM_SECRET,
+                ZLM_IP, "live", id, mediaPushUrl);
+
+        std::string host = ZLM_IP;
+        std::string api = "/index/api/addStreamPusherProxy";
+        std::string params = temp;
+        std::string url = host + api + params;
+        LOG_M_C(MQTT_CLIENT, "request url: %s", url.c_str());
+        std::string res = BoxHttpRequest::Send("get", url, "Content-Type: application/json;", "", 5000);
+        LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
+
+        // // 通知媒体服务器主动拉流
+        // httplib::Client httpclient(ZLM_API_URL);
+        // httplib::Logger logger([](const httplib::Request &req, const httplib::Response &res) {
+        //     printf("=====================================================================\n");
+        //     printf("http request path=%s, body=%s\n", req.path.c_str(), req.body.c_str());
+        //     printf("=====================================================================\n");
+        //     printf("http response body=\n%s", res.body.c_str());
+        //     printf("=====================================================================\n"); });
+        // httpclient.set_logger(logger);
+        // httplib::Result result = httpclient.Get(api);
+        // if (result == nullptr) {
+        //     LOG_M_E(MQTT_CLIENT, "=========================================");
+        //     LOG_M_E(MQTT_CLIENT, "http post add stream proxy failed.");
+        //     LOG_M_E(MQTT_CLIENT, "=========================================");
+
+        //     AX_CHAR szKey[32] = {0};
+        //     sprintf(szKey, "127.0.0.1/live/rtpstream%d", id);
+        //     key = szKey;
+        // }
+        // if (result && result->status == httplib::OK_200) {
+        //     auto jsonRes = nlohmann::json::parse(result->body);
+        //     int code = jsonRes["code"];
+        //     if (code == 0) {
+        //         key = jsonRes["data"]["key"];
+        //     } else {
+        //         AX_CHAR szKey[32] = {0};
+        //         sprintf(szKey, "127.0.0.1/live/rtpstream%d", id);
+        //         key = szKey;
+        //     }
+        // }
+
+        // if (key != "") {
+        //     mediasMap[id].nMediaStatus = 2; // 0异常 1正常/未使用 2使用中
+        //     mediasMap[id].taskInfo.nTaskStatus = 1; // 0未运行 1运行中
+        //     strcpy(mediasMap[id].taskInfo.szTaskKey, key.c_str());
+
+        //     // 更新配置
+        //     CBoxMediaParser::GetInstance()->SetMediasMap(mediasMap);
+        // }
+
+        return AX_TRUE;
+    }
+
+    LOG_M_C(MQTT_CLIENT, "StartOnlinePreview ----.");
 
     return AX_FALSE;
 }
 
+static AX_BOOL StopOnlinePreview(AX_U32 id) {
+    LOG_M_C(MQTT_CLIENT, "StopOnlinePreview ++++.");
+
+    // // 获取当前通道信息
+    // AX_U32 nMediaCnt = 0;
+    // STREAM_CONFIG_T streamConfig = CBoxConfig::GetInstance()->GetStreamConfig();
+    // std::vector<MEDIA_INFO_T> mediasMap = CBoxMediaParser::GetInstance()->GetMediasMap(&nMediaCnt, streamConfig.strMediaPath);
+
+    // if (id < (AX_U32)mediasMap.size()) {
+    //     // 通知媒体服务器删除流
+    //     char api[256] = {0};
+    //     sprintf(api, "/index/api/delStreamProxy?secret=%s&key=%s", ZLM_SECRET, mediasMap[id].taskInfo.szTaskKey);
+    //     httplib::Client httpclient(ZLM_API_URL);
+    //     httplib::Logger logger([](const httplib::Request &req, const httplib::Response &res) {
+    //         printf("=====================================================================\n");
+    //         printf("http request path=%s, body=%s\n", req.path.c_str(), req.body.c_str());
+    //         printf("=====================================================================\n");
+    //         printf("http response body=\n%s", res.body.c_str());
+    //         printf("=====================================================================\n"); });
+    //     httpclient.set_logger(logger);
+    //     httplib::Result result = httpclient.Get(api);
+    //     if (result && result->status == httplib::OK_200) {
+    //         auto jsonRes = nlohmann::json::parse(result->body);
+    //         int code = jsonRes["code"];
+    //         if (code == 0) {
+    //             LOG_M_C(MQTT_CLIENT, "stop preview media key [%s]++++.", mediasMap[id].taskInfo.szTaskKey);
+    //         }
+    //     }
+
+    //     // 0异常 1正常/未使用 2使用中
+    //     if (mediasMap[id].nMediaStatus != 0) {
+    //         mediasMap[id].nMediaStatus = controlCommand==ContrlCmd::RemoveAlgo ? 1 : 2; 
+    //     }
+    //     mediasMap[id].taskInfo.nTaskStatus = 0; // 0未运行 1运行中
+
+    //     // 更新配置
+    //     CBoxMediaParser::GetInstance()->SetMediasMap(mediasMap);
+
+    //     return AX_TRUE;
+    // }
+
+    LOG_M_C(MQTT_CLIENT, "StopOnlinePreview ----.");
+
+    return AX_FALSE;
+}
+#endif
 static void OnAlgoTaskControl(AX_U32 id, AX_U32 controlCommand, bool local) {
     LOG_M_C(MQTT_CLIENT, "OnAlgoTaskControl ++++.");
 
@@ -1098,9 +1244,9 @@ static void OnAlgoTaskControl(AX_U32 id, AX_U32 controlCommand, bool local) {
     lock.unlock();
 
     if (controlCommand == ContrlCmd::StartAlgo) {
-        ret = StartPreview(id);
+        ret = SartLocalPreview(id);
     } else if (controlCommand == ContrlCmd::StopAlgo || controlCommand == ContrlCmd::RemoveAlgo) {
-        ret = StopPreview(id, controlCommand);
+        ret = StopLocalPreview(id, controlCommand);
     }
 
     json child;
@@ -1120,6 +1266,24 @@ static void OnAlgoTaskControl(AX_U32 id, AX_U32 controlCommand, bool local) {
     std::string payload = root.dump();
     SendMsg(payload.c_str(), payload.size(), local);
 
+    if (local && cloud_mqtt_connected_) {
+        // 获取当前通道信息
+        AX_U32 nMediaCnt = 0;
+        STREAM_CONFIG_T streamConfig = CBoxConfig::GetInstance()->GetStreamConfig();
+        std::vector<MEDIA_INFO_T> mediasMap = CBoxMediaParser::GetInstance()->GetMediasMap(&nMediaCnt, streamConfig.strMediaPath);
+        if (id < (AX_U32)mediasMap.size() && mediasMap[id].taskInfo.szTaskWebId[0] != 0) {
+            std::string host = SERVER_URL;
+            std::string api = "/devices/admin/deviceTask/updateTaskStatus";
+            std::string taskWebId = mediasMap[id].taskInfo.szTaskWebId;
+            std::string params = "?id=" + taskWebId;
+            std::string status = controlCommand == ContrlCmd::StartAlgo ? "&taskStatus=1" : "&taskStatus=0";
+            std::string url = host + api + params + status;
+            LOG_M_C(MQTT_CLIENT, "request url: %s", url.c_str());
+            std::string res = BoxHttpRequest::Send("get", url, "Content-Type: application/json;", "", 5000);
+            LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
+        }
+    }
+
     LOG_M_C(MQTT_CLIENT, "OnAlgoTaskControl ----.");
 }
 
@@ -1127,6 +1291,99 @@ static void OnAlgoTaskSnapshot(AX_U32 id, bool local) {
     LOG_M_C(MQTT_CLIENT, "OnAlgoTaskSnapshot ++++.");
 
     LOG_M_C(MQTT_CLIENT, "OnAlgoTaskSnapshot ----.");
+}
+
+static void OnDelOnlineMediaChannel(std::string& mediaWebId) {
+    LOG_M_C(MQTT_CLIENT, "OnDelOnlineMediaChannel ++++.");
+    AX_BOOL ret = AX_FALSE;
+
+    // 获取当前通道信息
+    AX_U32 nMediaCnt = 0;
+    STREAM_CONFIG_T streamConfig = CBoxConfig::GetInstance()->GetStreamConfig();
+    std::vector<MEDIA_INFO_T> mediasMap = CBoxMediaParser::GetInstance()->GetMediasMap(&nMediaCnt, streamConfig.strMediaPath);
+    for (size_t i = 0; i < mediasMap.size(); i++) {
+        std::string mediaWebIdStr = mediasMap[i].szMediaWebId;
+        if (mediaWebIdStr == mediaWebId) {
+            ret = AX_TRUE;
+
+            mediasMap[i].nMediaDelete = 1;
+            memset(mediasMap[i].szMediaWebId, 0, sizeof(mediasMap[i].szMediaWebId));
+            mediasMap[i].taskInfo.nTaskDelete = 1;
+            memset(mediasMap[i].taskInfo.szTaskWebId, 0, sizeof(mediasMap[i].taskInfo.szTaskWebId));
+
+            // 更新配置
+            CBoxMediaParser::GetInstance()->SetMediasMap(mediasMap);
+
+            break;
+        }
+    }
+
+    json child;
+    child["type"] = "delOnlineMediaChannel";
+
+    json root;
+    if (ret == AX_TRUE) {
+        root["result"] = 0;
+        root["msg"] = "操作成功";
+    } else {
+        root["result"] = -1;
+        root["msg"] = "操作失败";
+    }
+    
+    root["data"] = child;
+
+    std::string payload = root.dump();
+    SendMsg(payload.c_str(), payload.size(), false);
+
+    LOG_M_C(MQTT_CLIENT, "OnDelOnlineMediaChannel ----.");
+}
+
+static void OnAlgoTaskOnlineControl(std::string& taskWebId, AX_U32 controlCommand) {
+    LOG_M_C(MQTT_CLIENT, "OnAlgoTaskOnlineControl ++++.");
+
+    AX_BOOL ret = AX_FALSE;
+
+    // 获取当前通道信息
+    AX_U32 nMediaCnt = 0;
+    STREAM_CONFIG_T streamConfig = CBoxConfig::GetInstance()->GetStreamConfig();
+    std::vector<MEDIA_INFO_T> mediasMap = CBoxMediaParser::GetInstance()->GetMediasMap(&nMediaCnt, streamConfig.strMediaPath);
+    for (size_t i = 0; i < mediasMap.size(); i++) {
+        std::string taskWebIdStr = mediasMap[i].taskInfo.szTaskWebId;
+        if (taskWebIdStr == taskWebId) {
+            ret = AX_TRUE;
+
+            std::unique_lock<std::mutex> lock(mtx);
+            StreamQueue.push({static_cast<ContrlCmd>(controlCommand), static_cast<AX_U32>(i)});
+            lock.unlock();
+
+            if (controlCommand == ContrlCmd::StartAlgo) {
+                ret = SartLocalPreview(static_cast<AX_U32>(i));
+            } else if (controlCommand == ContrlCmd::StopAlgo || controlCommand == ContrlCmd::RemoveAlgo) {
+                ret = StopLocalPreview(static_cast<AX_U32>(i), controlCommand);
+            }
+
+            break;
+        }
+    }
+
+    json child;
+    child["type"] = "algoTaskOnlineControl";
+
+    json root;
+    if (ret == AX_TRUE) {
+        root["result"] = 0;
+        root["msg"] = "操作成功";
+    } else {
+        root["result"] = -1;
+        root["msg"] = "操作失败";
+    }
+    
+    root["data"] = child;
+
+    std::string payload = root.dump();
+    SendMsg(payload.c_str(), payload.size(), false);
+
+    LOG_M_C(MQTT_CLIENT, "OnAlgoTaskOnlineControl ----.");
 }
 
 static std::string macAddressToString(const char* mac) {
@@ -1465,84 +1722,25 @@ AX_VOID MqttClient::SendLocalAlarmMsg() {
                 a_builder->playAudio(AudioFile);
             }
 
-            // // 短信告警推送
-            // json message = {
-            //     { "alarmDescribe", modelWarning },
-            //     { "alarmTime", currentTimeStr },
-            //     { "channelName", mediasMap[nChn].szMediaName },
-            //     { "deviceSymbol", "06C38B59-EB2D-4B7D-B67E-56E01228574F" },
-            //     { "flowStatus", "1" },
-            //     { "imageData", "#" },
-            //     { "reportInfo", modelWarning },
-            //     { "reportStatus", "1" },
-            //     { "taskDescribe", mediasMap[nChn].taskInfo.szTaskName },
-            //     { "tenantId", "1" },
-            // };
-            // auto params = message.dump();
-            // auto res = BoxHttpRequest::Send("post", 
-            //                     "http://192.168.0.196:8010/devices/admin/deviceAlarm/save", 
-            //                     "Content-Type: application/json;",
-            //                     params,
-            //                     5000);
-            // LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
+            // 短信告警推送
+            if (cloud_mqtt_connected_) {
+                json message = {
+                    {"alarmDescribe", modelWarning}, {"alarmTime", currentTimeStr}, {"channelName", mediasMap[nChn].szMediaName},
+                    {"deviceSymbol", cloud_topic_},  {"flowStatus", "1"},           {"imageData", "#"},
+                    {"reportInfo", modelWarning},    {"reportStatus", "1"},         {"taskDescribe", mediasMap[nChn].taskInfo.szTaskName},
+                    {"tenantId", cloud_tenant_id_},
+                };
+                auto params = message.dump();
+                auto res = BoxHttpRequest::Send("post", SERVER_URL + "/devices/admin/deviceAlarm/save", "Content-Type: application/json;",
+                                                params, 5000);
+                LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
+            }
         }
     }
 }
 
 AX_VOID MqttClient::SendCloudAlarmMsg() {
-    // AX_U32 nCount = local_jpeg_queue_->GetCount();
-    // if (nCount > 0) {
-    //     QUEUE_T jpg_info;
-    //     if (local_jpeg_queue_->Pop(jpg_info, 0)) {
-    //         SaveJpgFile(&jpg_info);
-    //         AX_U32 nChn = jpg_info.u64UserData & 0xff;
-    //         AX_U32 nAlgoType = (jpg_info.u64UserData >> 8) & 0xff;
 
-    //         // 释放内存
-    //         delete[] jpg_info.jpg_buf;
-    //         jpg_info.jpg_buf = nullptr;
-
-    //         std::string currentTimeStr;
-    //         GetSystime(currentTimeStr);
-
-    //         // 获取当前通道信息
-    //         AX_U32 nMediaCnt = 0;
-    //         AX_U32 nModelCnt = 0;
-    //         STREAM_CONFIG_T streamConfig = CBoxConfig::GetInstance()->GetStreamConfig();
-    //         std::vector<MEDIA_INFO_T> mediasMap = CBoxMediaParser::GetInstance()->GetMediasMap(&nMediaCnt, streamConfig.strMediaPath);
-    //         std::vector<MODEL_INFO_T> modelsMap = CBoxModelParser::GetInstance()->GetModelsMap(&nModelCnt, streamConfig.strModelPath);
-
-    //         AX_CHAR modelWarning[32] = { 0 };
-    //         for (size_t i = 0; i < modelsMap.size(); i++) {
-    //             if (modelsMap[i].nModelId == nAlgoType) {
-    //                 strcpy(modelWarning, modelsMap[i].szModelWarning);
-    //                 break;
-    //             }
-    //         }
-
-    //         // 短信告警推送
-    //         json message = {
-    //             { "alarmDescribe", modelWarning },
-    //             { "alarmTime", currentTimeStr },
-    //             { "channelName", mediasMap[nChn].szMediaName },
-    //             { "deviceSymbol", "06C38B59-EB2D-4B7D-B67E-56E01228574F" },
-    //             { "flowStatus", "1" },
-    //             { "imageData", "" },
-    //             { "reportInfo", modelWarning },
-    //             { "reportStatus", "1" },
-    //             { "taskDescribe", mediasMap[nChn].taskInfo.szTaskName },
-    //             { "tenantId", "1" },
-    //         };
-
-    //         auto params = message.dump();
-    //         auto res = BoxHttpRequest::Send("post", 
-    //                             "http://192.168.0.196:8010/devices/admin/deviceAlarm/save", 
-    //                             "Content-Type: application/json;",
-    //                             params,
-    //                             5000);
-    //         LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
-    //     }
-    // }
 }
 
 static void OnAlarmControl(AX_BOOL isAudio, AX_U32 status, bool local) {
@@ -1582,8 +1780,8 @@ static void OnGetAlarmStatus(bool local) {
     SendMsg(payload.c_str(), payload.size(), local);
 }
 
-static AX_VOID removeJpgFile(AX_BOOL isDir, nlohmann::json fileUrls, bool local) {
-    printf("removeJpgFile ++++\n");
+static AX_VOID OnRemoveJpgFile(AX_BOOL isDir, nlohmann::json fileUrls, bool local) {
+    LOG_M_C(MQTT_CLIENT, "OnRemoveJpgFile ++++.");
 
     json root, child;
 
@@ -1613,7 +1811,7 @@ static AX_VOID removeJpgFile(AX_BOOL isDir, nlohmann::json fileUrls, bool local)
     std::string payload = root.dump();
     SendMsg(payload.c_str(), payload.size(), local);
 
-    printf("removeJpgFile ----\n");
+    LOG_M_C(MQTT_CLIENT, "OnRemoveJpgFile ----.");
 }
 
 static AX_VOID OnGetConnectionSettings(bool local) {
@@ -1634,9 +1832,6 @@ static AX_VOID OnGetConnectionSettings(bool local) {
 
     std::string payload = root.dump();
     SendMsg(payload.c_str(), payload.size(), local);
-
-    system("/usr/bin/systemctl restart yj-mediaserver");
-    system("/usr/bin/systemctl restart yj-aibox");
 
     LOG_M_C(MQTT_CLIENT, "OnGetConnectionSettings ----.");
 }
@@ -1682,10 +1877,11 @@ static void MQTTCloudMessage(MQTT::MessageData& md) {
         OnGetMediaChannelList(false);
     } else if (type == "setMediaChannelInfo") { // 设置通道信息
         AX_U32 mediaId = jsonRes["mediaId"];
+        std::string mediaWebId = jsonRes["mediaWebId"];
         std::string mediaUrl = jsonRes["mediaUrl"];
         std::string mediaName = jsonRes["mediaName"];
         std::string mediaDesc = jsonRes["mediaDesc"];
-        OnSetMediaChannelInfo(mediaId, mediaUrl, mediaName, mediaDesc, false);
+        OnSetMediaChannelInfo(mediaId, mediaWebId, mediaUrl, mediaName, mediaDesc, false);
     } else if (type == "delMediaChannelInfo") { // 删除通道信息
         AX_U32 mediaId = jsonRes["mediaId"];
         OnDelMediaChannelInfo(mediaId, false);
@@ -1695,9 +1891,10 @@ static void MQTTCloudMessage(MQTT::MessageData& md) {
         OnGetAlgoTaskList(false);
     } else if (type == "setAlgoTaskInfo") { // 配置算法任务
         AX_U32 mediaId = jsonRes["mediaId"];
-        std::string pushUrl  = jsonRes["taskPushUrl"];
-        std::string taskName = jsonRes["taskName"];
-        std::string taskDesc = jsonRes["taskDesc"];
+        std::string taskWebId  = jsonRes["taskWebId"];
+        std::string pushUrl    = jsonRes["taskPushUrl"];
+        std::string taskName   = jsonRes["taskName"];
+        std::string taskDesc   = jsonRes["taskDesc"];
 
         std::vector<AX_U32> vAlgo;
         nlohmann::json algos = jsonRes["taskAlgos"];
@@ -1707,17 +1904,20 @@ static void MQTTCloudMessage(MQTT::MessageData& md) {
             }
         }
 
-        OnSetAlgoTaskInfo(mediaId, pushUrl, taskName, taskDesc, vAlgo, false);
+        OnSetAlgoTaskInfo(mediaId, taskWebId, pushUrl, taskName, taskDesc, vAlgo, false);
     } else if (type == "delAlgoTaskInfo") { // 删除算法任务
         AX_U32 mediaId = jsonRes["mediaId"];
         OnDelAlgoTaskInfo(mediaId, false);
-    } else if (type == "algoTaskControl") { // 控制算法启停
-        AX_U32 mediaId = jsonRes["mediaId"];
+    } else if (type == "algoTaskOnlineControl") { // 控制算法启停
+        std::string taskWebId = jsonRes["taskWebId"];
         AX_U32 controlCommand = jsonRes["controlCommand"];
-        OnAlgoTaskControl(mediaId, controlCommand, false);
+        OnAlgoTaskOnlineControl(taskWebId, controlCommand);
     } else if (type == "algoTaskSnapshot") { // 参考标底图
         AX_U32 mediaId = jsonRes["mediaId"];
         OnAlgoTaskSnapshot(mediaId, false);
+    } else if (type == "delOnlineMediaChannel") { // 线上删除通道
+        std::string mediaWebId = jsonRes["mediaWebId"];
+        OnDelOnlineMediaChannel(mediaWebId);
     } else if (type == "getAiBoxNetwork") { // 盒子网络信息
         OnGetAiBoxNetwork(false);
     } else if (type == "setAiBoxNetwork") { // 设置盒子网络
@@ -1737,10 +1937,10 @@ static void MQTTCloudMessage(MQTT::MessageData& md) {
     } else if (type == "getAlarmStatus") { // 获取告警配置
         OnGetAlarmStatus(false);
     } else if (type == "clearAllJpg") { // 删除所有图片
-        removeJpgFile(AX_TRUE, NULL, false);
+        OnRemoveJpgFile(AX_TRUE, NULL, false);
     } else if (type == "clearJpgFiles") { // 删除指定图片
         nlohmann::json fileUrls = jsonRes["fileUrls"];
-        removeJpgFile(AX_FALSE, fileUrls, false);
+        OnRemoveJpgFile(AX_FALSE, fileUrls, false);
     }
 
     LOG_MM_D(MQTT_CLIENT,"MQTTCloudMessage ----\n");
@@ -1757,14 +1957,14 @@ static bool ConnectCloudMQTT() {
     if (std::getline(ss, hostname, ':')) {
         if (ss >> port) {
             std::string host = SERVER_URL;
-            std::string api = "/system/admin/sysTenantAuths/details";
+            std::string api = "/system/admin/sysTenantAuths/auth";
             std::string params = "?accessKey=" + mqttConfig.accessKey + "&secretKey=" + mqttConfig.secretKey;
             std::string url = host + api + params;
             LOG_M_C(MQTT_CLIENT, "request url: %s", url.c_str());
             std::string res = BoxHttpRequest::Send("get", url, "Content-Type: application/json;", "", 5000);
             LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
 
-            bool success = AX_FALSE;
+            bool success = false;
             nlohmann::json jsonRes;
             try {
                 jsonRes = nlohmann::json::parse(res);
@@ -1833,7 +2033,7 @@ static bool ConnectCloudMQTT() {
                 std::string version;
                 GetVersion(version);
 
-                std::string tenantId = jsonRes["content"]["tenantId"];
+                cloud_tenant_id_ = jsonRes["content"]["tenantId"];
 
                 // 云端设备注册
                 json message = {
@@ -1845,7 +2045,7 @@ static bool ConnectCloudMQTT() {
                     {"status", "正常"},
                     {"storage", falsh_info.total},
                     {"systemVersion", version},
-                    {"tenantId", tenantId},
+                    {"tenantId", cloud_tenant_id_},
                 };
 
                 auto params = message.dump();
@@ -1880,6 +2080,9 @@ static AX_VOID OnSetConnectionSettings(const std::string &address, const std::st
 
     std::string payload = root.dump();
     SendMsg(payload.c_str(), payload.size(), local);
+
+    system("/usr/bin/systemctl restart yj-mediaserver");
+    system("/usr/bin/systemctl restart yj-aibox");
 
     LOG_M_C(MQTT_CLIENT, "OnSetConnectionSettings ----.");
 }
@@ -1954,10 +2157,11 @@ static void MQTTLocalMessage(MQTT::MessageData& md) {
         OnGetMediaChannelList(true);
     } else if (type == "setMediaChannelInfo") { // 设置通道信息
         AX_U32 mediaId = jsonRes["mediaId"];
+        std::string mediaWebId = jsonRes["mediaWebId"];
         std::string mediaUrl = jsonRes["mediaUrl"];
         std::string mediaName = jsonRes["mediaName"];
         std::string mediaDesc = jsonRes["mediaDesc"];
-        OnSetMediaChannelInfo(mediaId, mediaUrl, mediaName, mediaDesc, true);
+        OnSetMediaChannelInfo(mediaId, mediaWebId, mediaUrl, mediaName, mediaDesc, true);
     } else if (type == "delMediaChannelInfo") { // 删除通道信息
         AX_U32 mediaId = jsonRes["mediaId"];
         OnDelMediaChannelInfo(mediaId, true);
@@ -1967,9 +2171,10 @@ static void MQTTLocalMessage(MQTT::MessageData& md) {
         OnGetAlgoTaskList(true);
     } else if (type == "setAlgoTaskInfo") { // 配置算法任务
         AX_U32 mediaId = jsonRes["mediaId"];
-        std::string pushUrl  = jsonRes["taskPushUrl"];
-        std::string taskName = jsonRes["taskName"];
-        std::string taskDesc = jsonRes["taskDesc"];
+        std::string taskWebId  = jsonRes["taskWebId"];
+        std::string pushUrl    = jsonRes["taskPushUrl"];
+        std::string taskName   = jsonRes["taskName"];
+        std::string taskDesc   = jsonRes["taskDesc"];
 
         std::vector<AX_U32> vAlgo;
         nlohmann::json algos = jsonRes["taskAlgos"];
@@ -1979,7 +2184,7 @@ static void MQTTLocalMessage(MQTT::MessageData& md) {
             }
         }
 
-        OnSetAlgoTaskInfo(mediaId, pushUrl, taskName, taskDesc, vAlgo, true);
+        OnSetAlgoTaskInfo(mediaId, taskWebId, pushUrl, taskName, taskDesc, vAlgo, true);
     } else if (type == "delAlgoTaskInfo") { // 删除算法任务
         AX_U32 mediaId = jsonRes["mediaId"];
         OnDelAlgoTaskInfo(mediaId, true);
@@ -2009,10 +2214,10 @@ static void MQTTLocalMessage(MQTT::MessageData& md) {
     } else if (type == "getAlarmStatus") { // 获取告警配置
         OnGetAlarmStatus(true);
     } else if (type == "clearAllJpg") { // 删除所有图片
-        removeJpgFile(AX_TRUE, NULL, true);
+        OnRemoveJpgFile(AX_TRUE, NULL, true);
     } else if (type == "clearJpgFiles") { // 删除指定图片
         nlohmann::json fileUrls = jsonRes["fileUrls"];
-        removeJpgFile(AX_FALSE, fileUrls, true);
+        OnRemoveJpgFile(AX_FALSE, fileUrls, true);
     } else if (type == "getConnectionSettings") {
         OnGetConnectionSettings(true);
     } else if (type == "setConnectionSettings") {
@@ -2104,7 +2309,9 @@ AX_BOOL MqttClient::Init(MQTT_CONFIG_T &mqtt_config) {
     if (mqtt_config.address != "" && 
         mqtt_config.accessKey != "" && 
         mqtt_config.secretKey != "") {
-        ConnectCloudMQTT();
+        if (!ConnectCloudMQTT()) {
+            LOG_M_E(MQTT_CLIENT, "connect to cloud mqtt failed.");
+        }
     }
 
     return AX_TRUE;
@@ -2166,7 +2373,7 @@ AX_BOOL MqttClient::Start(AX_VOID) {
             if (mediasMap[i].taskInfo.nTaskStatus == 1) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
-                StartPreview(i);
+                SartLocalPreview(i);
 
                 LOG_MM_C(MQTT_CLIENT, "========================================");
                 LOG_MM_C(MQTT_CLIENT, "auto start preview [%ld].", i);
