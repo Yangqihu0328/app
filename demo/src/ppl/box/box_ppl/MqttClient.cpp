@@ -922,7 +922,7 @@ static void OnDelAlgoTaskInfo(AX_U32 id, bool local) {
         StreamQueue.push({ContrlCmd::RemoveAlgo, id});
         lock.unlock();
 
-        if (local) {
+        if (local && cloud_mqtt_connected_) {
             std::string host = SERVER_URL;
             std::string api = "/devices/admin/deviceTask/delete/";
             std::string params = mediasMap[id].taskInfo.szTaskWebId;
@@ -1109,7 +1109,7 @@ static AX_BOOL StopLocalPreview(AX_U32 id, AX_U32 controlCommand) {
 
     return AX_FALSE;
 }
-
+#if 0
 static AX_BOOL StartOnlinePreview(AX_U32 id) {
     LOG_M_C(MQTT_CLIENT, "StartOnlinePreview ++++.");
 
@@ -1233,7 +1233,7 @@ static AX_BOOL StopOnlinePreview(AX_U32 id) {
 
     return AX_FALSE;
 }
-
+#endif
 static void OnAlgoTaskControl(AX_U32 id, AX_U32 controlCommand, bool local) {
     LOG_M_C(MQTT_CLIENT, "OnAlgoTaskControl ++++.");
 
@@ -1266,7 +1266,7 @@ static void OnAlgoTaskControl(AX_U32 id, AX_U32 controlCommand, bool local) {
     std::string payload = root.dump();
     SendMsg(payload.c_str(), payload.size(), local);
 
-    if (local) {
+    if (local && cloud_mqtt_connected_) {
         // 获取当前通道信息
         AX_U32 nMediaCnt = 0;
         STREAM_CONFIG_T streamConfig = CBoxConfig::GetInstance()->GetStreamConfig();
@@ -1723,25 +1723,18 @@ AX_VOID MqttClient::SendLocalAlarmMsg() {
             }
 
             // 短信告警推送
-            json message = {
-                { "alarmDescribe", modelWarning },
-                { "alarmTime", currentTimeStr },
-                { "channelName", mediasMap[nChn].szMediaName },
-                { "deviceSymbol", cloud_topic_ },
-                { "flowStatus", "1" },
-                { "imageData", "#" },
-                { "reportInfo", modelWarning },
-                { "reportStatus", "1" },
-                { "taskDescribe", mediasMap[nChn].taskInfo.szTaskName },
-                { "tenantId", cloud_tenant_id_ },
-            };
-            auto params = message.dump();
-            auto res = BoxHttpRequest::Send("post", 
-                                SERVER_URL + "/devices/admin/deviceAlarm/save", 
-                                "Content-Type: application/json;",
-                                params,
-                                5000);
-            LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
+            if (cloud_mqtt_connected_) {
+                json message = {
+                    {"alarmDescribe", modelWarning}, {"alarmTime", currentTimeStr}, {"channelName", mediasMap[nChn].szMediaName},
+                    {"deviceSymbol", cloud_topic_},  {"flowStatus", "1"},           {"imageData", "#"},
+                    {"reportInfo", modelWarning},    {"reportStatus", "1"},         {"taskDescribe", mediasMap[nChn].taskInfo.szTaskName},
+                    {"tenantId", cloud_tenant_id_},
+                };
+                auto params = message.dump();
+                auto res = BoxHttpRequest::Send("post", SERVER_URL + "/devices/admin/deviceAlarm/save", "Content-Type: application/json;",
+                                                params, 5000);
+                LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
+            }
         }
     }
 }
@@ -1839,9 +1832,6 @@ static AX_VOID OnGetConnectionSettings(bool local) {
 
     std::string payload = root.dump();
     SendMsg(payload.c_str(), payload.size(), local);
-
-    system("/usr/bin/systemctl restart yj-mediaserver");
-    system("/usr/bin/systemctl restart yj-aibox");
 
     LOG_M_C(MQTT_CLIENT, "OnGetConnectionSettings ----.");
 }
@@ -2090,6 +2080,9 @@ static AX_VOID OnSetConnectionSettings(const std::string &address, const std::st
 
     std::string payload = root.dump();
     SendMsg(payload.c_str(), payload.size(), local);
+
+    system("/usr/bin/systemctl restart yj-mediaserver");
+    system("/usr/bin/systemctl restart yj-aibox");
 
     LOG_M_C(MQTT_CLIENT, "OnSetConnectionSettings ----.");
 }

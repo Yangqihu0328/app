@@ -43,7 +43,7 @@
         },
         {
             "id": 5,
-            "path": "/opt/bin/BoxDemo/models/fs20241211npu1.model",
+            "path": "/opt/bin/BoxDemo/models/fs20241213npu1.model",
             "name": "烟火识别",
             "desc": "烟火识别",
             "warning": "识别到烟火",
