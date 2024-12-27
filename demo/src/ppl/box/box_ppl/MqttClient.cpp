@@ -38,9 +38,11 @@ namespace boxconf {
 
 #define ALARM_IMG_PATH "ZLMediaKit/www/alarm"
 
-#define AI_BOX_VERSION "1.0.4"
+#define AI_BOX_VERSION "1.0.5"
 
-const std::string SERVER_URL = "http://192.168.0.196:8010";
+const std::string SERVER_ADDR = "192.168.0.196:8010";
+
+const std::string SERVER_URL = "http://" + SERVER_ADDR;
 
 using namespace std;
 using json = nlohmann::json;
@@ -1715,8 +1717,8 @@ AX_VOID MqttClient::SendLocalAlarmMsg() {
             }
 
             // 播放声音
-            AX_CHAR AudioFile[128] = { 0 };
-            sprintf(AudioFile, "%saudio/%d.wav", GetExecPath().c_str(),  nAlgoType);
+            AX_CHAR AudioFile[128] = {0};
+            sprintf(AudioFile, "%saudio/%d.wav", GetExecPath().c_str(), nAlgoType);
             if (!access(AudioFile, F_OK)) {
                 CBoxBuilder *a_builder = CBoxBuilder::GetInstance();
                 a_builder->playAudio(AudioFile);
@@ -1724,23 +1726,55 @@ AX_VOID MqttClient::SendLocalAlarmMsg() {
 
             // 短信告警推送
             if (cloud_mqtt_connected_) {
-                json message = {
-                    {"alarmDescribe", modelWarning}, {"alarmTime", currentTimeStr}, {"channelName", mediasMap[nChn].szMediaName},
-                    {"deviceSymbol", cloud_topic_},  {"flowStatus", "1"},           {"imageData", "#"},
-                    {"reportInfo", modelWarning},    {"reportStatus", "1"},         {"taskDescribe", mediasMap[nChn].taskInfo.szTaskName},
-                    {"tenantId", cloud_tenant_id_},
-                };
-                auto params = message.dump();
-                auto res = BoxHttpRequest::Send("post", SERVER_URL + "/devices/admin/deviceAlarm/save", "Content-Type: application/json;",
-                                                params, 5000);
+                // 上传图片
+                std::string url = SERVER_URL + "/system/admin/system/deviceFileUpload";
+                std::string host = "Host: " + SERVER_ADDR;
+                std::string filePath = jpg_info.tJpegInfo.tCaptureInfo.tHeaderInfo.szImgPath;
+                std::string res = BoxHttpRequest::UploadFile(cloud_tenant_id_, url, host, filePath);
                 LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
+
+                bool success = false;
+                nlohmann::json jsonRes;
+                try {
+                    jsonRes = nlohmann::json::parse(res);
+                    success = jsonRes["success"];
+                    if (success) {
+                        std::string content = jsonRes["content"];
+                        res = BoxHttpRequest::UploadFileData(content, filePath);
+                        LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
+
+                        size_t pos = content.find('?');
+                        if (pos != std::string::npos) {
+                            std::string imageData = content.substr(0, pos);
+
+                            // 告警推送
+                            json message = {
+                                {"alarmDescribe", modelWarning},
+                                {"alarmTime", currentTimeStr},
+                                {"channelName", mediasMap[nChn].szMediaName},
+                                {"deviceSymbol", cloud_topic_},
+                                {"flowStatus", "1"},
+                                {"imageData", imageData},
+                                {"reportInfo", modelWarning},
+                                {"reportStatus", "1"},
+                                {"taskDescribe", mediasMap[nChn].taskInfo.szTaskName},
+                                {"tenantId", cloud_tenant_id_},
+                            };
+                            auto params = message.dump();
+                            res = BoxHttpRequest::Send("post", SERVER_URL + "/devices/admin/deviceAlarm/save",
+                                                       "Content-Type: application/json;", params, 5000);
+                            LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
+                        }
+                    }
+                } catch (const nlohmann::json::parse_error &e) {
+                    std::cerr << "JSON parse error: " << e.what() << std::endl;
+                    std::cerr << "Received message: " << res << std::endl;
+                } catch (const std::exception &e) {
+                    std::cerr << "An error occurred: " << e.what() << std::endl;
+                }
             }
         }
     }
-}
-
-AX_VOID MqttClient::SendCloudAlarmMsg() {
-
 }
 
 static void OnAlarmControl(AX_BOOL isAudio, AX_U32 status, bool local) {
@@ -2435,27 +2469,7 @@ AX_VOID MqttClient::LocalWorkThread(AX_VOID* pArg) {
 AX_VOID MqttClient::CloudWorkThread(AX_VOID* pArg) {
     LOG_M_C(MQTT_CLIENT, "CloudWorkThread +++");
 
-    // CBoxBuilder *p_builder = CBoxBuilder::GetInstance();
     while (cloud_work_thread_.IsRunning()) {
-        // process alarm message
-        SendCloudAlarmMsg();
-
-        // if (!StreamQueue.empty()) {
-        //     std::unique_lock<std::mutex> lock(mtx);
-        //     StreamCmd stream_cmd = StreamQueue.front();
-        //     StreamQueue.pop();
-        //     lock.unlock();
-
-        //     if (stream_cmd.cmd == ContrlCmd::StartAlgo) {
-        //         p_builder->RemoveStream(stream_cmd.id);
-        //         p_builder->AddStream(stream_cmd.id);
-        //     } else if (stream_cmd.cmd == ContrlCmd::RemoveAlgo) {
-        //         p_builder->RemoveStream(stream_cmd.id);
-        //     } else if (stream_cmd.cmd == ContrlCmd::StopAlgo) {
-        //         p_builder->RemoveStream(stream_cmd.id);
-        //     }
-        // }
-
         if (cloud_client_) {
             cloud_client_->yield(50UL); // sleep 50ms
         }
