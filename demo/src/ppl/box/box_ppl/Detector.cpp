@@ -122,6 +122,9 @@ AX_VOID CDetector::WorkerThread(AX_U32 nGrd) {
                         memcpy(&item.data.fire_smoke_info, &obj.fire_smoke_info, sizeof(item.data.fire_smoke_info));
                         memcpy(&item.data.vehicle_info, &obj.vehicle_info, sizeof(item.data.vehicle_info));
 
+                        // LOG_M_E(DETECTOR, "model id=%u, draw box [%.2f, %.2f, %.2f, %.2f], label=%d", result.nAlgoType,
+                        //     obj.bbox.x, obj.bbox.y, obj.bbox.w, obj.bbox.h, obj.fire_smoke_info.label);
+
                         // 提取边界框并校验宽度和高度
                         float x = obj.bbox.x;
                         float y = obj.bbox.y;
@@ -212,6 +215,7 @@ AX_BOOL CDetector::Init(const DETECTOR_ATTR_T &stAttr) {
             std::string cur_dir = GetCurrentDir();
             strcpy(init_info.license_path, cur_dir.c_str());
             init_info.param = ax_algorithm_get_default_param();
+            LOG_M_E(DETECTOR, "model id=%u, fire smoke param=%.2f +++", modelsMap[algo].nModelId, init_info.param.fire_smoke_param.det_threshold);
             int ret = ax_algorithm_init(&init_info, &handle_[nChn][i]);
             if (ret != 0) {
                 LOG_M_E(DETECTOR, "%s: ax_algorithm_init fail=0x%x", __func__, ret);
@@ -305,6 +309,7 @@ AX_BOOL CDetector::StartId(int id) {
             std::string cur_dir = GetCurrentDir();
             strcpy(init_info.license_path, cur_dir.c_str());
             init_info.param = ax_algorithm_get_default_param();
+            LOG_M_E(DETECTOR, "model id=%u, fire smoke param=%.2f +++", modelsMap[algo].nModelId, init_info.param.fire_smoke_param.det_threshold);
             int ret = ax_algorithm_init(&init_info, &handle_[id][i]);
             if (ret != 0) {
                 LOG_M_E(DETECTOR, "%s: ax_algorithm_init fail=0x%x", __func__, ret);

@@ -338,7 +338,6 @@ private:
     AX_VOID CloudWorkThread(AX_VOID* pArg);
 	AX_BOOL SaveJpgFile(QUEUE_T* jpg_info);
 	AX_VOID SendLocalAlarmMsg();
-    AX_VOID SendCloudAlarmMsg();
 
 protected:
 	std::unique_ptr<CAXLockQ<QUEUE_T>> local_jpeg_queue_;

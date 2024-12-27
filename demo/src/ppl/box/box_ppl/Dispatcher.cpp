@@ -297,9 +297,11 @@ AX_VOID CDispatcher::DrawBox(const CAXFrame& axFrame, const DETECT_RESULT_T& fhv
         }
 
         switch (fhvp.item[i].eType) {
-            case DETECT_TYPE_FACE:
-            case DETECT_TYPE_PEOPLE:
-            case DETECT_TYPE_VEHICLE:
+            case DETECT_TYPE_PEOPLE_DETECTION:
+            case DETECT_TYPE_PEOPLE_ATTR:
+            case DETECT_TYPE_LPR:
+            case DETECT_TYPE_FACE_DETECTION:
+            case DETECT_TYPE_FACE_RECOGNITION:
                 if (fhvp.item[i].nTrackId == 0) {
                     gdi.nColor = 0xFF8080; /* YYUUVV white */
                 } else {
@@ -311,7 +313,7 @@ AX_VOID CDispatcher::DrawBox(const CAXFrame& axFrame, const DETECT_RESULT_T& fhv
                 ++arrCount[fhvp.item[i].eType];
 #endif
                 break;
-            case DETECT_TYPE_FIRE:
+            case DETECT_TYPE_FIRE_SMOKE:
                 //确定火的框颜色
                 gdi.nColor = 0XAABBCC;
 #ifdef DRAW_FHVP_LABEL
@@ -344,8 +346,11 @@ AX_VOID CDispatcher::DrawBox(const CAXFrame& axFrame, const DETECT_RESULT_T& fhv
 #ifdef DRAW_FHVP_LABEL
     //这里只是统计最终数量
     AX_CHAR szLabel[64]{0};
-    snprintf(szLabel, sizeof(szLabel), "PEOPLE:%02d VEHICLE:%02d FACE:%02d FIRE:%02d", arrCount[DETECT_TYPE_PEOPLE], arrCount[DETECT_TYPE_VEHICLE],
-             arrCount[DETECT_TYPE_FACE], arrCount[DETECT_TYPE_FIRE]);
+    snprintf(szLabel, sizeof(szLabel), "PEOPLE:%02d VEHICLE:%02d FACE:%02d FIRE:%02d", 
+        arrCount[DETECT_TYPE_PEOPLE_DETECTION], 
+        arrCount[DETECT_TYPE_LPR],
+        arrCount[DETECT_TYPE_FACE_DETECTION], 
+        arrCount[DETECT_TYPE_FIRE_SMOKE]);
     m_font.FillString(szLabel, 8, canvas.nH - 12, &yuv, canvas.nW, canvas.nH);
 #endif
 }

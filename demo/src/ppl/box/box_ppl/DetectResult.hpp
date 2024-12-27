@@ -25,10 +25,12 @@
 
 //临时写一个算法列表，火焰，动物，手势，抽烟
 typedef enum {
-    DETECT_TYPE_PEOPLE = 0,
-    DETECT_TYPE_VEHICLE = 1,
-    DETECT_TYPE_FACE = 2,
-    DETECT_TYPE_FIRE = 3,
+    DETECT_TYPE_PEOPLE_DETECTION = 0,
+    DETECT_TYPE_PEOPLE_ATTR = 1,
+    DETECT_TYPE_LPR = 2,
+    DETECT_TYPE_FACE_DETECTION = 3,
+    DETECT_TYPE_FACE_RECOGNITION = 4,
+    DETECT_TYPE_FIRE_SMOKE = 5,
     DETECT_TYPE_TOTAL
 } DETECT_TYPE_E;
 
@@ -120,7 +122,17 @@ public:
         std::unordered_set<AX_S32> currentTrackIds;
         for (const auto& newItem : result.item) {
             if (trackIdSet.find(newItem.nTrackId) == trackIdSet.end()) {
-                new_result.result_diff = AX_TRUE;
+                if (result.nAlgoType == DETECT_TYPE_PEOPLE_DETECTION ||
+                    result.nAlgoType == DETECT_TYPE_PEOPLE_ATTR ||
+                    result.nAlgoType == DETECT_TYPE_LPR ||
+                    result.nAlgoType == DETECT_TYPE_FACE_DETECTION ||
+                    result.nAlgoType == DETECT_TYPE_FACE_RECOGNITION) {
+                    new_result.result_diff = AX_TRUE;
+                } else if (result.nAlgoType == DETECT_TYPE_FIRE_SMOKE) {
+                    if (newItem.data.fire_smoke_info.label == 0) {
+                        new_result.result_diff = AX_TRUE;
+                    }
+                }
             }
             trackIdSet.insert(newItem.nTrackId);
             currentTrackIds.insert(newItem.nTrackId);
