@@ -6,6 +6,12 @@
 
 #include "curl.h"
 #include "cmdline.hpp"
+#include "nlohmann/json.hpp"
+
+using json = nlohmann::json;
+
+const std::string SERVER_ADDR = "192.168.0.196:8010";
+const std::string SERVER_URL = "http://" + SERVER_ADDR;
 
 static bool gIsRunning = false;
 
@@ -105,46 +111,167 @@ int download_file(const char *url, const char *outfilename) {
     return 0;
 }
 
-int main(int argc, char *argv[]) {
-    cmdline::parser parser;
-    parser.add<std::string>("deb", 'd', "deb path", true);
-    parser.add<std::string>("output", 'o', "output path", false, "plate_result");
-    parser.parse_check(argc, argv);
+// 回调函数，用于处理接收到的HTTP响应
+size_t write_callback(void* contents, size_t size, size_t nmemb, std::string* response) {
+    size_t total_size = size * nmemb;
+    response->append((char*)contents, total_size);
+    return total_size;
+}
 
+std::string http_post_request(const std::string& url, const std::string& headers, const std::string& params, long timeout) {
+    CURL* curl;
+    CURLcode res;
+    std::string response;
+
+    // 初始化 libcurl
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    curl = curl_easy_init();
+
+    if (curl) {
+        // 设置请求 URL
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+
+        // 设置请求方法
+        curl_easy_setopt(curl, CURLOPT_POST, 1L);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, params.c_str());
+
+        // 设置请求头
+        struct curl_slist* header_list = nullptr;
+        if (!headers.empty()) {
+            std::istringstream headerStream(headers);
+            std::string header;
+            while (std::getline(headerStream, header, ';')) {
+                header_list = curl_slist_append(header_list, header.c_str());
+            }
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, header_list);
+        }
+
+        // 设置超时时间
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, timeout);
+
+        // 设置响应回调函数
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+
+        // 发送请求
+        res = curl_easy_perform(curl);
+
+        // 检查是否发生错误
+        if (res != CURLE_OK) {
+            response = curl_easy_strerror(res);
+        }
+
+        // 清理资源
+        curl_easy_cleanup(curl);
+        curl_slist_free_all(header_list);
+    }
+
+    // 清理 libcurl
+    curl_global_cleanup();  
+
+    return response;
+}
+
+int main(int argc, char *argv[]) {
     signal(SIGINT, exit_handler);
     signal(SIGQUIT, exit_handler);
 
-    std::string deb_path = parser.get<std::string>("deb");
-    std::string output_path = parser.get<std::string>("output");
+    cmdline::parser parser;
+    parser.add<std::string>("id", 'i', "device id", true);
+    parser.add<std::string>("url", 'u', "package url", true);
+    parser.add<std::string>("name", 'n', "package name", true);
+    parser.add<std::string>("describe", 'd', "package describe", true);
+    parser.add<std::string>("token", 't', "web once token", true);
+    parser.parse_check(argc, argv);
 
-    if (download_file(deb_path.c_str(), output_path.c_str()) == 0) {
-        printf("\n#\n");
-        printf("#\n");
-        printf("# File downloaded successfully.\n");
-        printf("#\n");
-        printf("#\n");
-        printf("# Begin remove aibox.\n");
-        printf("#\n");
-        printf("#\n");
-        system("/usr/bin/dpkg -r aibox");
-        printf("#\n");
-        printf("#\n");
-        printf("# Finish remove aibox.\n");
-        printf("#\n");
-        printf("#\n");
-        printf("# Begin install aibox.\n");
-        printf("#\n");
-        printf("#\n");
-        std::string cmd = "/usr/bin/dpkg -i " + output_path;
-        system(cmd.c_str());
-        printf("#\n");
-        printf("#\n");
-        printf("# Finish install aibox.\n");
-        printf("#\n");
-        printf("#\n");
+    std::string did = parser.get<std::string>("id");
+    std::string package_url = parser.get<std::string>("url");
+    std::string package_name = parser.get<std::string>("name");
+    std::string package_describe = parser.get<std::string>("describe");
+    std::string web_token = parser.get<std::string>("token");
 
-    } else {
-        printf("# Failed to download file.\n");
+    std::string res;
+    std::string host = SERVER_URL;
+    std::string api = "/devices/admin/upgradeRecord/save";
+    std::string url = host + api;
+    std::string header = "token: " + web_token + ";Content-Type: application/json;";
+
+    // 更新中
+    json message = {{"deviceSymbol", did}, 
+                    {"packageName", package_name}, 
+                    {"packageDescribe", package_describe}, 
+                    {"upgradeStatus", 1}};
+    std::string params = message.dump();
+    res = http_post_request(url, header, params, 5000);
+    printf("response: %s.\n", res.c_str());
+
+    bool success = false;
+    nlohmann::json jsonRes;
+    try {
+        jsonRes = nlohmann::json::parse(res);
+        success = jsonRes["success"];
+        if (success) {
+            std::string id = jsonRes["content"]["id"];
+
+            std::string package_full_name = "/opt/" + package_name + ".deb";
+            if (download_file(package_url.c_str(), package_full_name.c_str()) == 0) {
+                printf("\n#\n");
+                printf("#\n");
+                printf("# File downloaded successfully.\n");
+                printf("#\n");
+                printf("#\n");
+                printf("# Begin remove aibox.\n");
+                printf("#\n");
+                printf("#\n");
+
+                system("/usr/bin/dpkg -r aibox");
+
+                printf("#\n");
+                printf("#\n");
+                printf("# Finish remove aibox.\n");
+                printf("#\n");
+                printf("#\n");
+                printf("# Begin install aibox.\n");
+                printf("#\n");
+                printf("#\n");
+
+                std::string cmd = "/usr/bin/dpkg -i " + package_full_name;
+                system(cmd.c_str());
+
+                printf("#\n");
+                printf("#\n");
+                printf("# Finish install aibox.\n");
+                printf("#\n");
+                printf("#\n");
+
+                // 更新成功
+                message = {{"id", id},
+                           {"deviceSymbol", did},
+                           {"packageName", package_name},
+                           {"packageDescribe", package_describe},
+                           {"upgradeStatus", 2}};
+                params = message.dump();
+                res = http_post_request(url, header, params, 5000);
+                printf("response: %s", res.c_str());
+
+            } else {
+                printf("# Failed to download file.\n");
+
+                // 更新失败
+                message = {{"id", id},
+                           {"deviceSymbol", did},
+                           {"packageName", package_name},
+                           {"packageDescribe", package_describe},
+                           {"upgradeStatus", 0}};
+                params = message.dump();
+                res = http_post_request(url, header, params, 5000);
+                printf("response: %s", res.c_str());
+            }
+        }
+    } catch (const nlohmann::json::parse_error &e) {
+        std::cerr << "JSON parse error: " << e.what() << std::endl;
+    } catch (const std::exception &e) {
+        std::cerr << "An error occurred: " << e.what() << std::endl;
     }
 
     return 0;

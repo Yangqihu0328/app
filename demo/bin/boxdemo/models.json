@@ -3,7 +3,7 @@
     "models":[
         {
             "id": 0,
-            "path": "/opt/aibox/models/person20241206npu1.model",
+            "path": "./models/person20241206npu1.model",
             "name": "人物检测",
             "desc": "人物检测",
             "warning": "识别到人物",
@@ -11,7 +11,7 @@
         },
         {
             "id": 1,
-            "path": "/opt/aibox/models/person20241206npu1.model",
+            "path": "./models/person20241206npu1.model",
             "name": "人物特征检测",
             "desc": "人物特征检测",
             "warning": "识别到人物",
@@ -19,7 +19,7 @@
         },
         {
             "id": 2,
-            "path": "/opt/aibox/models/lpr20241114.model",
+            "path": "./models/lpr20241114.model",
             "name": "车辆结构化",
             "desc": "车辆结构化",
             "warning": "识别到车辆",
@@ -27,7 +27,7 @@
         },
         {
             "id": 3,
-            "path": "/opt/aibox/models/fr20241129npu1.model",
+            "path": "./models/fr20241129npu1.model",
             "name": "人脸识别",
             "desc": "人脸识别",
             "warning": "识别到人脸",
@@ -35,7 +35,7 @@
         },
         {
             "id": 4,
-            "path": "/opt/aibox/models/fr20241129npu1.model",
+            "path": "./models/fr20241129npu1.model",
             "name": "人脸特征识别",
             "desc": "人脸特征识别",
             "warning": "识别到人脸",
@@ -43,7 +43,7 @@
         },
         {
             "id": 5,
-            "path": "/opt/aibox/models/fs20241213npu1.model",
+            "path": "./models/fs20241213npu1.model",
             "name": "烟火识别",
             "desc": "烟火识别",
             "warning": "识别到烟火",

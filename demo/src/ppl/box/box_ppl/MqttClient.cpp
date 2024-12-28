@@ -38,7 +38,7 @@ namespace boxconf {
 
 #define ALARM_IMG_PATH "ZLMediaKit/www/alarm"
 
-#define AI_BOX_VERSION "1.0.5"
+#define AI_BOX_VERSION "1.0.7"
 
 const std::string SERVER_ADDR = "192.168.0.196:8010";
 
@@ -1975,6 +1975,20 @@ static void MQTTCloudMessage(MQTT::MessageData& md) {
     } else if (type == "clearJpgFiles") { // 删除指定图片
         nlohmann::json fileUrls = jsonRes["fileUrls"];
         OnRemoveJpgFile(AX_FALSE, fileUrls, false);
+    } else if (type == "appUpdate") {
+        std::string package_url = jsonRes["packageUrl"];
+        std::string package_name = jsonRes["packageName"];
+        std::string package_describe = jsonRes["packageDescribe"];
+        std::string once_token = jsonRes["token"];
+
+        std::string cmd_id = " -i " + cloud_topic_;
+        std::string cmd_url = " -u " + package_url;
+        std::string cmd_package_name =  " -n " + package_name;
+        std::string cmd_package_describe =  " -d " + package_describe;
+        std::string cmd_token =  " -t " + once_token;
+        std::string cmd_full = "/opt/boxupdate" + cmd_id + cmd_url + cmd_package_name + cmd_package_describe + cmd_token;
+        LOG_MM_E(MQTT_CLIENT,">>>>>>>>>>>>>>>>> %s.\n", cmd_full.c_str());
+        system(cmd_full.c_str());
     }
 
     LOG_MM_D(MQTT_CLIENT,"MQTTCloudMessage ----\n");
@@ -2030,6 +2044,7 @@ static bool ConnectCloudMQTT() {
                     data.clientID.cstring = mqttConfig.username.c_str();
                     data.username.cstring = mqttConfig.username.c_str();
                     data.password.cstring = mqttConfig.userpasswd.c_str();
+                    data.keepAliveInterval = 15; // keep alive 15s
                     rc = cloud_client_->connect(data);
                     if (rc != 0) {
                         LOG_M_E(MQTT_CLIENT, "connect cloud mqtt fail, rc is %d\n", rc);
@@ -2083,8 +2098,9 @@ static bool ConnectCloudMQTT() {
                 };
 
                 auto params = message.dump();
-                std::string res = BoxHttpRequest::Send("post", SERVER_URL + "/devices/admin/deviceInfo/save",
-                                                       "Content-Type: application/json;", params, 5000);
+                std::string api = "/devices/admin/deviceInfo/save";
+                std::string url = SERVER_URL + api;
+                std::string res = BoxHttpRequest::Send("post", url, "Content-Type: application/json;", params, 5000);
                 LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
 
                 cloud_mqtt_connected_ = true;
@@ -2460,7 +2476,11 @@ AX_VOID MqttClient::LocalWorkThread(AX_VOID* pArg) {
             }
         }
 
-        local_client_->yield(50UL); // sleep 50ms
+        int ret = local_client_->yield(50UL); // sleep 50ms
+        if (ret == -1) {
+            LOG_M_E(MQTT_CLIENT, ">>>>>>>>>>>>>> local mqtt is disconnected. <<<<<<<<<<<<<<<<");
+            break;
+        }
     }
 
     LOG_M_C(MQTT_CLIENT, "LocalWorkThread ---");
@@ -2471,9 +2491,24 @@ AX_VOID MqttClient::CloudWorkThread(AX_VOID* pArg) {
 
     while (cloud_work_thread_.IsRunning()) {
         if (cloud_client_) {
-            cloud_client_->yield(50UL); // sleep 50ms
+            int ret = cloud_client_->yield(50UL); // sleep 50ms
+            if (ret == -1) {
+                LOG_M_E(MQTT_CLIENT, ">>>>>>>>>>>>>> cloud mqtt is disconnected. <<<<<<<<<<<<<<<<");
+                break;
+            }
         }
     }
+
+    int rc = cloud_client_->unsubscribe(cloud_topic_.c_str());
+    if (rc != 0) LOG_M_E(MQTT_CLIENT, "rc from unsubscribe was %d", rc);
+
+    rc = cloud_client_->disconnect();
+    if (rc != 0) LOG_M_E(MQTT_CLIENT, "rc from disconnect was %d", rc);
+
+    cloud_ipstack_->disconnect();
+
+    cloud_client_ = nullptr;
+    cloud_ipstack_ = nullptr;
 
     LOG_M_C(MQTT_CLIENT, "CloudWorkThread ---");
 }
