@@ -38,9 +38,11 @@ namespace boxconf {
 
 #define ALARM_IMG_PATH "ZLMediaKit/www/alarm"
 
-#define AI_BOX_VERSION "1.0.4"
+#define AI_BOX_VERSION "1.0.8"
 
-const std::string SERVER_URL = "http://192.168.0.196:8010";
+const std::string SERVER_ADDR = "192.168.0.196:8010";
+
+const std::string SERVER_URL = "http://" + SERVER_ADDR;
 
 using namespace std;
 using json = nlohmann::json;
@@ -1627,21 +1629,53 @@ static void OnSetAiBoxNetwork(const std::string &name, const AX_U32 dhcp, const 
     LOG_M_C(MQTT_CLIENT, "OnSetAiBoxNetwork ----.");
 }
 
+AX_BOOL MqttClient::CheckSpaceAndRemoveOldFiles(AX_U32 nChn) {
+    AX_CHAR szDateDir[128] = {0};
+    sprintf(szDateDir, "%s%s/DEV_%02d", GetExecPath().c_str(), ALARM_IMG_PATH, nChn);
+    AX_U64 freeSpaseSize = CDiskHelper::GetFreeSpaceSize(szDateDir);
+    LOG_M_C(MQTT_CLIENT, ">>>> free spase size: %lld(%lld MB) <<<<", freeSpaseSize, freeSpaseSize >> 20);
+
+    // 磁盘空间小于100MB
+    if (freeSpaseSize < 100 * 1024 * 1024) {
+        auto listAllDirs = CDiskHelper::TraverseDirs(szDateDir);
+
+        // 保留最近7天的记录
+        if (listAllDirs.size() > 7) {
+            for (AX_U8 i = 0; i < listAllDirs.size() - 7; ++i) {
+                string strDir = listAllDirs.at(i).path;
+
+                AX_U64 nRemovedSize = 0;
+                std::deque<DISK_FILE_INFO_T> listAllFiles = CDiskHelper::TraverseFiles(strDir.c_str());
+                for (auto &m : listAllFiles) {
+                    nRemovedSize += m.size;
+                }
+
+                CDiskHelper::RemoveDir(strDir.c_str());
+                LOG_M_C(MQTT_CLIENT, "Delete obsoleted directory %s, extra %d MB can be reused.", strDir.c_str(), nRemovedSize >> 20);
+            }
+        }
+    }
+
+    return AX_TRUE;
+}
+
 // /* TODO: need web support file copy, then show in web*/
 AX_BOOL MqttClient::SaveJpgFile(QUEUE_T *jpg_info) {
     JPEG_DATA_INFO_T *pJpegInfo = &jpg_info->tJpegInfo;
     AX_U32 nChn = jpg_info->u64UserData & 0xff;
     AX_U32 nAlgoType = (jpg_info->u64UserData >> 8) & 0xff;
 
+    CheckSpaceAndRemoveOldFiles(nChn);
+
     /* Data file parent directory format: </XXX/DEV_XX/YYYY-MM-DD> */
     AX_CHAR szDateBuf[16] = {0};
     CElapsedTimer::GetLocalDate(szDateBuf, 16, '-');
 
     AX_CHAR szDateDir[128] = {0};
-    sprintf(szDateDir, "%s%s/DEV_%02d/%02d/%s", GetExecPath().c_str(), ALARM_IMG_PATH, nChn, nAlgoType, szDateBuf);
+    sprintf(szDateDir, "%s%s/DEV_%02d/%s", GetExecPath().c_str(), ALARM_IMG_PATH, nChn, szDateBuf);
 
     if (CDiskHelper::CreateDir(szDateDir, AX_FALSE)) {
-        sprintf(pJpegInfo->tCaptureInfo.tHeaderInfo.szImgPath, "%s/%s_%02d_%02d.jpg", szDateDir, pJpegInfo->tCaptureInfo.tHeaderInfo.szTimestamp, nChn, nAlgoType);
+        sprintf(pJpegInfo->tCaptureInfo.tHeaderInfo.szImgPath, "%s/%02d_%s.jpg", szDateDir, nAlgoType, pJpegInfo->tCaptureInfo.tHeaderInfo.szTimestamp);
 
         // Open file to write
         std::ofstream outFile(pJpegInfo->tCaptureInfo.tHeaderInfo.szImgPath, std::ios::binary);
@@ -1715,8 +1749,8 @@ AX_VOID MqttClient::SendLocalAlarmMsg() {
             }
 
             // 播放声音
-            AX_CHAR AudioFile[128] = { 0 };
-            sprintf(AudioFile, "%saudio/%d.wav", GetExecPath().c_str(),  nAlgoType);
+            AX_CHAR AudioFile[128] = {0};
+            sprintf(AudioFile, "%saudio/%d.wav", GetExecPath().c_str(), nAlgoType);
             if (!access(AudioFile, F_OK)) {
                 CBoxBuilder *a_builder = CBoxBuilder::GetInstance();
                 a_builder->playAudio(AudioFile);
@@ -1724,23 +1758,55 @@ AX_VOID MqttClient::SendLocalAlarmMsg() {
 
             // 短信告警推送
             if (cloud_mqtt_connected_) {
-                json message = {
-                    {"alarmDescribe", modelWarning}, {"alarmTime", currentTimeStr}, {"channelName", mediasMap[nChn].szMediaName},
-                    {"deviceSymbol", cloud_topic_},  {"flowStatus", "1"},           {"imageData", "#"},
-                    {"reportInfo", modelWarning},    {"reportStatus", "1"},         {"taskDescribe", mediasMap[nChn].taskInfo.szTaskName},
-                    {"tenantId", cloud_tenant_id_},
-                };
-                auto params = message.dump();
-                auto res = BoxHttpRequest::Send("post", SERVER_URL + "/devices/admin/deviceAlarm/save", "Content-Type: application/json;",
-                                                params, 5000);
+                // 上传图片
+                std::string url = SERVER_URL + "/system/admin/system/deviceFileUpload";
+                std::string host = "Host: " + SERVER_ADDR;
+                std::string filePath = jpg_info.tJpegInfo.tCaptureInfo.tHeaderInfo.szImgPath;
+                std::string res = BoxHttpRequest::UploadFile(cloud_tenant_id_, url, host, filePath);
                 LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
+
+                bool success = false;
+                nlohmann::json jsonRes;
+                try {
+                    jsonRes = nlohmann::json::parse(res);
+                    success = jsonRes["success"];
+                    if (success) {
+                        std::string content = jsonRes["content"];
+                        res = BoxHttpRequest::UploadFileData(content, filePath);
+                        LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
+
+                        size_t pos = content.find('?');
+                        if (pos != std::string::npos) {
+                            std::string imageData = content.substr(0, pos);
+
+                            // 告警推送
+                            json message = {
+                                {"alarmDescribe", modelWarning},
+                                {"alarmTime", currentTimeStr},
+                                {"channelName", mediasMap[nChn].szMediaName},
+                                {"deviceSymbol", cloud_topic_},
+                                {"flowStatus", "1"},
+                                {"imageData", imageData},
+                                {"reportInfo", modelWarning},
+                                {"reportStatus", "1"},
+                                {"taskDescribe", mediasMap[nChn].taskInfo.szTaskName},
+                                {"tenantId", cloud_tenant_id_},
+                            };
+                            auto params = message.dump();
+                            res = BoxHttpRequest::Send("post", SERVER_URL + "/devices/admin/deviceAlarm/save",
+                                                       "Content-Type: application/json;", params, 5000);
+                            LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
+                        }
+                    }
+                } catch (const nlohmann::json::parse_error &e) {
+                    std::cerr << "JSON parse error: " << e.what() << std::endl;
+                    std::cerr << "Received message: " << res << std::endl;
+                } catch (const std::exception &e) {
+                    std::cerr << "An error occurred: " << e.what() << std::endl;
+                }
             }
         }
     }
-}
-
-AX_VOID MqttClient::SendCloudAlarmMsg() {
-
 }
 
 static void OnAlarmControl(AX_BOOL isAudio, AX_U32 status, bool local) {
@@ -1941,6 +2007,20 @@ static void MQTTCloudMessage(MQTT::MessageData& md) {
     } else if (type == "clearJpgFiles") { // 删除指定图片
         nlohmann::json fileUrls = jsonRes["fileUrls"];
         OnRemoveJpgFile(AX_FALSE, fileUrls, false);
+    } else if (type == "appUpdate") {
+        std::string package_url = jsonRes["packageUrl"];
+        std::string package_name = jsonRes["packageName"];
+        std::string package_describe = jsonRes["packageDescribe"];
+        std::string once_token = jsonRes["token"];
+
+        std::string cmd_id = " -i " + cloud_topic_;
+        std::string cmd_url = " -u " + package_url;
+        std::string cmd_package_name =  " -n " + package_name;
+        std::string cmd_package_describe =  " -d " + package_describe;
+        std::string cmd_token =  " -t " + once_token;
+        std::string cmd_full = "/opt/bin/boxupdate" + cmd_id + cmd_url + cmd_package_name + cmd_package_describe + cmd_token;
+        LOG_MM_E(MQTT_CLIENT,">>>>>>>>>>>>>>>>> %s.\n", cmd_full.c_str());
+        system(cmd_full.c_str());
     }
 
     LOG_MM_D(MQTT_CLIENT,"MQTTCloudMessage ----\n");
@@ -1996,6 +2076,7 @@ static bool ConnectCloudMQTT() {
                     data.clientID.cstring = mqttConfig.username.c_str();
                     data.username.cstring = mqttConfig.username.c_str();
                     data.password.cstring = mqttConfig.userpasswd.c_str();
+                    data.keepAliveInterval = 15; // keep alive 15s
                     rc = cloud_client_->connect(data);
                     if (rc != 0) {
                         LOG_M_E(MQTT_CLIENT, "connect cloud mqtt fail, rc is %d\n", rc);
@@ -2042,6 +2123,7 @@ static bool ConnectCloudMQTT() {
                     {"deviceSymbol", cloud_topic_},
                     {"memory", memInfo.totalMem},
                     {"softwareVersion", AI_BOX_VERSION},
+                    {"chipVersion", "AX650N"},
                     {"status", "正常"},
                     {"storage", falsh_info.total},
                     {"systemVersion", version},
@@ -2049,8 +2131,9 @@ static bool ConnectCloudMQTT() {
                 };
 
                 auto params = message.dump();
-                std::string res = BoxHttpRequest::Send("post", SERVER_URL + "/devices/admin/deviceInfo/save",
-                                                       "Content-Type: application/json;", params, 5000);
+                std::string api = "/devices/admin/deviceInfo/save";
+                std::string url = SERVER_URL + api;
+                std::string res = BoxHttpRequest::Send("post", url, "Content-Type: application/json;", params, 5000);
                 LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
 
                 cloud_mqtt_connected_ = true;
@@ -2426,7 +2509,11 @@ AX_VOID MqttClient::LocalWorkThread(AX_VOID* pArg) {
             }
         }
 
-        local_client_->yield(50UL); // sleep 50ms
+        int ret = local_client_->yield(50UL); // sleep 50ms
+        if (ret == -1) {
+            LOG_M_E(MQTT_CLIENT, ">>>>>>>>>>>>>> local mqtt is disconnected. <<<<<<<<<<<<<<<<");
+            break;
+        }
     }
 
     LOG_M_C(MQTT_CLIENT, "LocalWorkThread ---");
@@ -2435,31 +2522,26 @@ AX_VOID MqttClient::LocalWorkThread(AX_VOID* pArg) {
 AX_VOID MqttClient::CloudWorkThread(AX_VOID* pArg) {
     LOG_M_C(MQTT_CLIENT, "CloudWorkThread +++");
 
-    // CBoxBuilder *p_builder = CBoxBuilder::GetInstance();
     while (cloud_work_thread_.IsRunning()) {
-        // process alarm message
-        SendCloudAlarmMsg();
-
-        // if (!StreamQueue.empty()) {
-        //     std::unique_lock<std::mutex> lock(mtx);
-        //     StreamCmd stream_cmd = StreamQueue.front();
-        //     StreamQueue.pop();
-        //     lock.unlock();
-
-        //     if (stream_cmd.cmd == ContrlCmd::StartAlgo) {
-        //         p_builder->RemoveStream(stream_cmd.id);
-        //         p_builder->AddStream(stream_cmd.id);
-        //     } else if (stream_cmd.cmd == ContrlCmd::RemoveAlgo) {
-        //         p_builder->RemoveStream(stream_cmd.id);
-        //     } else if (stream_cmd.cmd == ContrlCmd::StopAlgo) {
-        //         p_builder->RemoveStream(stream_cmd.id);
-        //     }
-        // }
-
         if (cloud_client_) {
-            cloud_client_->yield(50UL); // sleep 50ms
+            int ret = cloud_client_->yield(50UL); // sleep 50ms
+            if (ret == -1) {
+                LOG_M_E(MQTT_CLIENT, ">>>>>>>>>>>>>> cloud mqtt is disconnected. <<<<<<<<<<<<<<<<");
+                break;
+            }
         }
     }
+
+    int rc = cloud_client_->unsubscribe(cloud_topic_.c_str());
+    if (rc != 0) LOG_M_E(MQTT_CLIENT, "rc from unsubscribe was %d", rc);
+
+    rc = cloud_client_->disconnect();
+    if (rc != 0) LOG_M_E(MQTT_CLIENT, "rc from disconnect was %d", rc);
+
+    cloud_ipstack_->disconnect();
+
+    cloud_client_ = nullptr;
+    cloud_ipstack_ = nullptr;
 
     LOG_M_C(MQTT_CLIENT, "CloudWorkThread ---");
 }

@@ -57,8 +57,8 @@ typedef struct AUDIO_ATTR_T_S {
     std::string audio_file; // 音频文件
 
     AUDIO_ATTR_T_S(AX_VOID) {
-        card = 0;
-        device = 2;
+        card = 1;
+        device = 0;
         channels = 2;
         rate = 16000;
         bits = AX_AUDIO_BIT_WIDTH_16;
