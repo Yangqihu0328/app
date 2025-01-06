@@ -10,8 +10,9 @@
 
 using json = nlohmann::json;
 
-const std::string SERVER_ADDR = "192.168.0.196:8010";
-const std::string SERVER_URL = "http://" + SERVER_ADDR;
+// const std::string SERVER_URL = "http://192.168.0.196:8010";
+
+const std::string SERVER_URL = "https://api-aibox.yunjist.com";
 
 static bool gIsRunning = false;
 

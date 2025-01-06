@@ -32,17 +32,13 @@ namespace boxconf {
 #define ZLM_API_URL "http://" ZLM_IP ":80"
 #define ZLM_SECRET  "81DBE7AF-ACD5-47D8-A692-F4B27456E6FD"
 
-#define ZLM_ONLINE_IP      "43.139.241.83"
-#define ZLM_ONLINE_API_URL "http://" ZLM_ONLINE_IP ":8080"
-#define ZLM_ONLINE_SECRET  "81DBE7AF-ACD5-47D8-A692-F4B27456E6FD"
-
 #define ALARM_IMG_PATH "ZLMediaKit/www/alarm"
 
-#define AI_BOX_VERSION "1.0.8"
+#define AI_BOX_VERSION "1.0.9"
 
-const std::string SERVER_ADDR = "192.168.0.196:8010";
+// const std::string SERVER_URL = "http://192.168.0.196:8010";
 
-const std::string SERVER_URL = "http://" + SERVER_ADDR;
+const std::string SERVER_URL = "https://api-aibox.yunjist.com";
 
 using namespace std;
 using json = nlohmann::json;
@@ -62,6 +58,7 @@ static std::string cloud_tenant_id_;
 static std::shared_ptr<IPStack> cloud_ipstack_ = nullptr;
 static std::shared_ptr<MQTT::Client<IPStack, Countdown>> cloud_client_ = nullptr;
 static bool cloud_mqtt_connected_ = false;
+static std::string online_token_;
 
 static bool isLogin = false;
 static int arrivedcount = 0;
@@ -97,8 +94,8 @@ static std::string GetUID() {
 
     size_t pos = temp_line.find(' ');
     if (pos != std::string::npos) {
-        std::string result = temp_line.substr(pos + 1);
-        return result;
+        std::string result = temp_line.substr(pos + 3);
+        return "ax650n_" + result;
     }
 
     return temp_line;
@@ -372,7 +369,7 @@ static void OnGetDashBoardInfo(bool local) {
 
     json board_info = {
         {"type", "getDashBoardInfo"}, 
-        {"BoardId", "YJ-AIBOX-001"}, 
+        {"BoardId", GetUID()}, 
         {"BoardIp", szIP},
         {"BoardPlatform", version},
         {"BoardTemp", temperature},
@@ -666,6 +663,106 @@ bool check_RTSP_stream(const std::string& rtspUrl) {
     return true;
 }
 
+static void SyncMediaChannelList() {
+    // 获取当前通道信息
+    AX_U32 nMediaCnt = 0;
+    STREAM_CONFIG_T streamConfig = CBoxConfig::GetInstance()->GetStreamConfig();
+    std::vector<MEDIA_INFO_T> mediasMap = CBoxMediaParser::GetInstance()->GetMediasMap(&nMediaCnt, streamConfig.strMediaPath);
+
+    json arr = nlohmann::json::array();
+    for (size_t i = 0; i < mediasMap.size(); i++) {
+        if (mediasMap[i].nMediaDelete == 1) continue;
+
+        json message;
+        message["address"] = mediasMap[i].szMediaUrl;
+        message["cameraType"] = "EZV-Onvif";
+        message["channelName"] = mediasMap[i].szMediaName;
+        message["channelStatus"] = mediasMap[i].nMediaStatus == 0 ? "0" : "1";
+        message["useStatus"] = mediasMap[i].nMediaStatus == 2 ? "1" : "0";
+        message["connectionType"] = "RTSP";
+        message["deviceType"] = "IPC";
+        message["streamType"] = "main";
+        message["port"] = "554";
+        message["userName"] = "admin";
+        message["password"] = "admin";
+        message["id"] = mediasMap[i].szMediaWebId;
+        message["tenantId"] = cloud_tenant_id_;
+
+        auto params = message.dump();
+        std::string api = "/devices/admin/deviceChannel/save";
+        std::string url = SERVER_URL + api;
+        std::string header = "token: " + online_token_ + ";Content-Type: application/json;";
+        LOG_M_C(MQTT_CLIENT, "++++++++++++++++++++++++++++++");
+        LOG_M_C(MQTT_CLIENT, "request url: %s", url.c_str());
+        std::string res = BoxHttpRequest::Send("post", url, header, params, 5000);
+        LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
+        LOG_M_C(MQTT_CLIENT, "------------------------------");
+
+        try {
+            json jsonRes = nlohmann::json::parse(res);
+            bool success = jsonRes["success"];
+            if (success) {
+                std::string mediaWebId = jsonRes["content"]["id"];
+                strcpy(mediasMap[i].szMediaWebId, mediaWebId.c_str());
+            }
+        } catch (const nlohmann::json::parse_error &e) {
+            std::cerr << "JSON parse error: " << e.what() << std::endl;
+        } catch (const std::exception &e) {
+            std::cerr << "An error occurred: " << e.what() << std::endl;
+        }
+    }
+
+    // 更新配置
+    CBoxMediaParser::GetInstance()->SetMediasMap(mediasMap);
+}
+
+static void SyncAlgoTaskList() {
+    // 获取当前通道信息
+    AX_U32 nMediaCnt = 0;
+    STREAM_CONFIG_T streamConfig = CBoxConfig::GetInstance()->GetStreamConfig();
+    std::vector<MEDIA_INFO_T> mediasMap = CBoxMediaParser::GetInstance()->GetMediasMap(&nMediaCnt, streamConfig.strMediaPath);
+
+    json arr = nlohmann::json::array();
+    for (size_t i = 0; i < mediasMap.size(); i++) {
+        if (mediasMap[i].taskInfo.nTaskDelete == 1) continue;
+
+        json message;
+        message["channelId"] = mediasMap[i].szMediaWebId;
+        message["deviceSymbol"] = cloud_topic_;
+        message["id"] = mediasMap[i].taskInfo.szTaskWebId;
+        message["taskName"] = mediasMap[i].taskInfo.szTaskName;
+        message["taskStatus"] = mediasMap[i].taskInfo.nTaskStatus;
+        message["reportAddress"] = "https://test.com";
+        message["tenantId"] = cloud_tenant_id_;
+
+        auto params = message.dump();
+        std::string api = "/devices/admin/deviceTask/save";
+        std::string url = SERVER_URL + api;
+        std::string header = "token: " + online_token_ + ";Content-Type: application/json;";
+        LOG_M_C(MQTT_CLIENT, "++++++++++++++++++++++++++++++");
+        LOG_M_C(MQTT_CLIENT, "request url: %s", url.c_str());
+        std::string res = BoxHttpRequest::Send("post", url, header, params, 5000);
+        LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
+        LOG_M_C(MQTT_CLIENT, "------------------------------");
+
+        try {
+            json jsonRes = nlohmann::json::parse(res);
+            bool success = jsonRes["success"];
+            if (success) {
+                std::string taskWebId = jsonRes["content"]["id"];
+                strcpy(mediasMap[i].taskInfo.szTaskWebId, taskWebId.c_str());
+            }
+        } catch (const nlohmann::json::parse_error &e) {
+            std::cerr << "JSON parse error: " << e.what() << std::endl;
+        } catch (const std::exception &e) {
+            std::cerr << "An error occurred: " << e.what() << std::endl;
+        }
+    }
+
+    // 更新配置
+    CBoxMediaParser::GetInstance()->SetMediasMap(mediasMap);
+}
+
 static void OnGetMediaChannelList(bool local) {
     LOG_M_C(MQTT_CLIENT, "OnGetMediaChannelList ++++.");
 
@@ -714,6 +811,18 @@ static void OnSetMediaChannelInfo(AX_U32 id, const std::string& mediaWebId, cons
     STREAM_CONFIG_T streamConfig = CBoxConfig::GetInstance()->GetStreamConfig();
     std::vector<MEDIA_INFO_T> mediasMap = CBoxMediaParser::GetInstance()->GetMediasMap(&nMediaCnt, streamConfig.strMediaPath);
 
+    // web id to media id
+    if (id == 0xFFFF) {
+        for (size_t i = 0; i < mediasMap.size(); i++) {
+            std::string webId = mediasMap[i].szMediaWebId;
+            if (webId == mediaWebId) {
+                id = i;
+                break;
+            }
+        }
+    }
+
+    // check media id
     if (id < (AX_U32)mediasMap.size()) {
         mediasMap[id].nMediaId = id;
         mediasMap[id].nMediaDelete = 0;
@@ -741,6 +850,7 @@ static void OnSetMediaChannelInfo(AX_U32 id, const std::string& mediaWebId, cons
 
     std::string payload = root.dump();
     SendMsg(payload.c_str(), payload.size(), local);
+    if (local) SyncMediaChannelList();
 
     LOG_M_C(MQTT_CLIENT, "OnSetMediaChannelInfo ----.");
 }
@@ -898,6 +1008,7 @@ static void OnSetAlgoTaskInfo(AX_U32 id, const std::string &taskWebId, const std
 
     std::string payload = root.dump();
     SendMsg(payload.c_str(), payload.size(), local);
+    if (local) SyncAlgoTaskList();
 
     LOG_M_C(MQTT_CLIENT, "OnSetAlgoTaskInfo ----.");
 }
@@ -929,9 +1040,11 @@ static void OnDelAlgoTaskInfo(AX_U32 id, bool local) {
             std::string api = "/devices/admin/deviceTask/delete/";
             std::string params = mediasMap[id].taskInfo.szTaskWebId;
             std::string url = host + api + params;
+            LOG_M_C(MQTT_CLIENT, "++++++++++++++++++++++++++++++");
             LOG_M_C(MQTT_CLIENT, "request url: %s", url.c_str());
             std::string res = BoxHttpRequest::Send("delete", url, "Content-Type: application/json;", "", 5000);
             LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
+            LOG_M_C(MQTT_CLIENT, "------------------------------");
         }
 
         // 更新配置
@@ -1112,6 +1225,10 @@ static AX_BOOL StopLocalPreview(AX_U32 id, AX_U32 controlCommand) {
     return AX_FALSE;
 }
 #if 0
+#define ZLM_ONLINE_IP      "43.139.241.83"
+#define ZLM_ONLINE_API_URL "http://" ZLM_ONLINE_IP ":8080"
+#define ZLM_ONLINE_SECRET  "81DBE7AF-ACD5-47D8-A692-F4B27456E6FD"
+
 static AX_BOOL StartOnlinePreview(AX_U32 id) {
     LOG_M_C(MQTT_CLIENT, "StartOnlinePreview ++++.");
 
@@ -1138,9 +1255,11 @@ static AX_BOOL StartOnlinePreview(AX_U32 id) {
         std::string api = "/index/api/addStreamPusherProxy";
         std::string params = temp;
         std::string url = host + api + params;
+        LOG_M_C(MQTT_CLIENT, "++++++++++++++++++++++++++++++");
         LOG_M_C(MQTT_CLIENT, "request url: %s", url.c_str());
         std::string res = BoxHttpRequest::Send("get", url, "Content-Type: application/json;", "", 5000);
         LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
+        LOG_M_C(MQTT_CLIENT, "------------------------------");
 
         // // 通知媒体服务器主动拉流
         // httplib::Client httpclient(ZLM_API_URL);
@@ -1280,9 +1399,11 @@ static void OnAlgoTaskControl(AX_U32 id, AX_U32 controlCommand, bool local) {
             std::string params = "?id=" + taskWebId;
             std::string status = controlCommand == ContrlCmd::StartAlgo ? "&taskStatus=1" : "&taskStatus=0";
             std::string url = host + api + params + status;
+            LOG_M_C(MQTT_CLIENT, "++++++++++++++++++++++++++++++");
             LOG_M_C(MQTT_CLIENT, "request url: %s", url.c_str());
             std::string res = BoxHttpRequest::Send("get", url, "Content-Type: application/json;", "", 5000);
             LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
+            LOG_M_C(MQTT_CLIENT, "------------------------------");
         }
     }
 
@@ -1760,10 +1881,12 @@ AX_VOID MqttClient::SendLocalAlarmMsg() {
             if (cloud_mqtt_connected_) {
                 // 上传图片
                 std::string url = SERVER_URL + "/system/admin/system/deviceFileUpload";
-                std::string host = "Host: " + SERVER_ADDR;
                 std::string filePath = jpg_info.tJpegInfo.tCaptureInfo.tHeaderInfo.szImgPath;
-                std::string res = BoxHttpRequest::UploadFile(cloud_tenant_id_, url, host, filePath);
+                LOG_M_C(MQTT_CLIENT, "++++++++++++++++++++++++++++++");
+                LOG_M_C(MQTT_CLIENT, "request url: %s", url.c_str());
+                std::string res = BoxHttpRequest::UploadFile(cloud_tenant_id_, url, filePath);
                 LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
+                LOG_M_C(MQTT_CLIENT, "------------------------------");
 
                 bool success = false;
                 nlohmann::json jsonRes;
@@ -1793,9 +1916,12 @@ AX_VOID MqttClient::SendLocalAlarmMsg() {
                                 {"tenantId", cloud_tenant_id_},
                             };
                             auto params = message.dump();
-                            res = BoxHttpRequest::Send("post", SERVER_URL + "/devices/admin/deviceAlarm/save",
-                                                       "Content-Type: application/json;", params, 5000);
+                            std::string url = SERVER_URL + "/devices/admin/deviceAlarm/save";
+                            LOG_M_C(MQTT_CLIENT, "++++++++++++++++++++++++++++++");
+                            LOG_M_C(MQTT_CLIENT, "request url: %s", url.c_str());
+                            res = BoxHttpRequest::Send("post", url, "Content-Type: application/json;", params, 5000);
                             LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
+                            LOG_M_C(MQTT_CLIENT, "------------------------------");
                         }
                     }
                 } catch (const nlohmann::json::parse_error &e) {
@@ -2040,15 +2166,107 @@ static bool ConnectCloudMQTT() {
             std::string api = "/system/admin/sysTenantAuths/auth";
             std::string params = "?accessKey=" + mqttConfig.accessKey + "&secretKey=" + mqttConfig.secretKey;
             std::string url = host + api + params;
+            LOG_M_C(MQTT_CLIENT, "++++++++++++++++++++++++++++++");
             LOG_M_C(MQTT_CLIENT, "request url: %s", url.c_str());
             std::string res = BoxHttpRequest::Send("get", url, "Content-Type: application/json;", "", 5000);
             LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
+            LOG_M_C(MQTT_CLIENT, "------------------------------");
 
             bool success = false;
             nlohmann::json jsonRes;
             try {
                 jsonRes = nlohmann::json::parse(res);
                 success = jsonRes["success"];
+                if (success) {
+                    online_token_ = jsonRes["content"]["token"];
+                    
+                    cloud_topic_ = GetUID();
+                    cloud_ipstack_ = std::make_unique<IPStack>();
+                    cloud_client_ = std::make_unique<MQTT::Client<IPStack, Countdown>>(*cloud_ipstack_);
+
+                    LOG_M_C(MQTT_CLIENT, "Mqtt Version is %d, cloud topic is %s", mqttConfig.version, cloud_topic_.c_str());
+                    LOG_M_C(MQTT_CLIENT, "Connecting to %s:%d", hostname.c_str(), port);
+
+                    int rc = cloud_ipstack_->connect(hostname.c_str(), port);
+                    if (rc != 0) {
+                        LOG_M_E(MQTT_CLIENT, "connect cloud mqtt fail, rc is %d", rc);
+                        return false;
+                    } else {
+                        MQTTPacket_connectData data = MQTTPacket_connectData_initializer;
+                        data.MQTTVersion = mqttConfig.version;
+                        data.clientID.cstring = mqttConfig.username.c_str();
+                        data.username.cstring = mqttConfig.username.c_str();
+                        data.password.cstring = mqttConfig.userpasswd.c_str();
+                        data.keepAliveInterval = 15; // keep alive 15s
+                        rc = cloud_client_->connect(data);
+                        if (rc != 0) {
+                            LOG_M_E(MQTT_CLIENT, "connect cloud mqtt fail, rc is %d\n", rc);
+                            return false;
+                        } else {
+                            LOG_M_C(MQTT_CLIENT, "cloud mqtt connected sucess");
+                            rc = cloud_client_->subscribe(cloud_topic_.c_str(), MQTT::QOS0, MQTTCloudMessage);
+                            if (rc != 0) {
+                                LOG_M_E(MQTT_CLIENT, "cloud mqtt subscribe failed, rc is %d\n", rc);
+                                return false;
+                            }
+
+                            LOG_M_C(MQTT_CLIENT, "cloud mqtt subscribe [%s] success", cloud_topic_.c_str());
+                        }
+                    }
+
+                    AX_CHAR szIP[64] = {0};
+                    int ret = GetIP(szIP);
+                    if (ret == -1) {
+                        LOG_MM_D(MQTT_CLIENT, "GetIP fail.");
+                    }
+
+                    MemoryInfo memInfo = {0};
+                    ret = GetMemoryInfo(memInfo);
+                    if (ret == -1) {
+                        LOG_MM_D(MQTT_CLIENT, "GetMemoryInfo fail.");
+                    }
+
+                    FlashInfo falsh_info = {0};
+                    ret = GetDiskUsage("/", falsh_info);
+                    if (ret == -1) {
+                        LOG_MM_D(MQTT_CLIENT, "GetDiskUsage fail.");
+                    }
+
+                    std::string version;
+                    GetVersion(version);
+
+                    cloud_tenant_id_ = jsonRes["content"]["tenantId"];
+
+                    // 云端设备注册
+                    json message = {
+                        {"authorizationStatus", "已授权"},
+                        {"deviceIp", szIP},
+                        {"deviceSymbol", cloud_topic_},
+                        {"memory", memInfo.totalMem},
+                        {"softwareVersion", AI_BOX_VERSION},
+                        {"chipVersion", "AX650N"},
+                        {"status", "1"},
+                        {"storage", falsh_info.total},
+                        {"systemVersion", version},
+                        {"tenantId", cloud_tenant_id_},
+                    };
+
+                    auto params = message.dump();
+                    std::string api = "/devices/admin/deviceInfo/save";
+                    std::string url = SERVER_URL + api;
+                    LOG_M_C(MQTT_CLIENT, "++++++++++++++++++++++++++++++");
+                    LOG_M_C(MQTT_CLIENT, "request url: %s", url.c_str());
+                    std::string res = BoxHttpRequest::Send("post", url, "Content-Type: application/json;", params, 5000);
+                    LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
+                    LOG_M_C(MQTT_CLIENT, "------------------------------");
+
+                    SyncMediaChannelList();
+                    SyncAlgoTaskList();
+
+                    cloud_mqtt_connected_ = true;
+
+                    return true;
+                }
             } catch (const nlohmann::json::parse_error& e) {
                 std::cerr << "JSON parse error: " << e.what() << std::endl;
                 std::cerr << "Received message: " << res << std::endl;
@@ -2056,89 +2274,6 @@ static bool ConnectCloudMQTT() {
             } catch (const std::exception& e) {
                 std::cerr << "An error occurred: " << e.what() << std::endl;
                 return false;
-            }
-
-            if (success) {
-                cloud_topic_ = GetUID();
-                cloud_ipstack_ = std::make_unique<IPStack>();
-                cloud_client_ = std::make_unique<MQTT::Client<IPStack, Countdown>>(*cloud_ipstack_);
-
-                LOG_M_C(MQTT_CLIENT, "Mqtt Version is %d, cloud topic is %s", mqttConfig.version, cloud_topic_.c_str());
-                LOG_M_C(MQTT_CLIENT, "Connecting to %s:%d", hostname.c_str(), port);
-
-                int rc = cloud_ipstack_->connect(hostname.c_str(), port);
-                if (rc != 0) {
-                    LOG_M_E(MQTT_CLIENT, "connect cloud mqtt fail, rc is %d", rc);
-                    return false;
-                } else {
-                    MQTTPacket_connectData data = MQTTPacket_connectData_initializer;
-                    data.MQTTVersion = mqttConfig.version;
-                    data.clientID.cstring = mqttConfig.username.c_str();
-                    data.username.cstring = mqttConfig.username.c_str();
-                    data.password.cstring = mqttConfig.userpasswd.c_str();
-                    data.keepAliveInterval = 15; // keep alive 15s
-                    rc = cloud_client_->connect(data);
-                    if (rc != 0) {
-                        LOG_M_E(MQTT_CLIENT, "connect cloud mqtt fail, rc is %d\n", rc);
-                        return false;
-                    } else {
-                        LOG_M_C(MQTT_CLIENT, "cloud mqtt connected sucess");
-                        rc = cloud_client_->subscribe(cloud_topic_.c_str(), MQTT::QOS0, MQTTCloudMessage);
-                        if (rc != 0) {
-                            LOG_M_E(MQTT_CLIENT, "cloud mqtt subscribe failed, rc is %d\n", rc);
-                            return false;
-                        }
-
-                        LOG_M_C(MQTT_CLIENT, "cloud mqtt subscribe [%s] success", cloud_topic_.c_str());
-                    }
-                }
-
-                AX_CHAR szIP[64] = {0};
-                int ret = GetIP(szIP);
-                if (ret == -1) {
-                    LOG_MM_D(MQTT_CLIENT, "GetIP fail.");
-                }
-
-                MemoryInfo memInfo = {0};
-                ret = GetMemoryInfo(memInfo);
-                if (ret == -1) {
-                    LOG_MM_D(MQTT_CLIENT, "GetMemoryInfo fail.");
-                }
-
-                FlashInfo falsh_info = {0};
-                ret = GetDiskUsage("/", falsh_info);
-                if (ret == -1) {
-                    LOG_MM_D(MQTT_CLIENT, "GetDiskUsage fail.");
-                }
-
-                std::string version;
-                GetVersion(version);
-
-                cloud_tenant_id_ = jsonRes["content"]["tenantId"];
-
-                // 云端设备注册
-                json message = {
-                    {"authorizationStatus", "已授权"},
-                    {"deviceIp", szIP},
-                    {"deviceSymbol", cloud_topic_},
-                    {"memory", memInfo.totalMem},
-                    {"softwareVersion", AI_BOX_VERSION},
-                    {"chipVersion", "AX650N"},
-                    {"status", "正常"},
-                    {"storage", falsh_info.total},
-                    {"systemVersion", version},
-                    {"tenantId", cloud_tenant_id_},
-                };
-
-                auto params = message.dump();
-                std::string api = "/devices/admin/deviceInfo/save";
-                std::string url = SERVER_URL + api;
-                std::string res = BoxHttpRequest::Send("post", url, "Content-Type: application/json;", params, 5000);
-                LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
-
-                cloud_mqtt_connected_ = true;
-
-                return true;
             }
         }
     }
