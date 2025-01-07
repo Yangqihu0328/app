@@ -84,6 +84,9 @@ protected:
     AX_VOID WorkerThread(AX_U32 tid);
     AX_VOID ClearQueue(AX_S32 nGrp);
 
+private:
+    std::string GetCurrentDir();
+
 protected:
     DETECTOR_ATTR_T m_stAttr;
     CAXLockQ<CAXFrame>* m_arrFrameQ{nullptr};

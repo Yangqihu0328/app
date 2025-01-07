@@ -1,42 +1,41 @@
 #pragma once
 
-#include <sys/types.h>
-#include <sys/ioctl.h>
-#include <sys/socket.h>
-#include <sys/param.h>
-#include <sys/time.h>
-#include <sys/statvfs.h>
-#include <sys/select.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
 #include <arpa/inet.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <netdb.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <stdio.h>
+#include <sys/ioctl.h>
+#include <sys/param.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <sys/statvfs.h>
+#include <sys/time.h>
+#include <sys/types.h>
 #include <unistd.h>
-#include <errno.h>
-#include <fcntl.h>
 
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
-#include <signal.h>
 
+#include <ctime>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <memory>
-#include <vector>
-#include <fstream>
 #include <string>
-#include <iomanip>
-#include <ctime>
+#include <vector>
 
+#include "AXLockQ.hpp"
+#include "AXThread.hpp"
 #include "BoxConfig.hpp"
 #include "IObserver.h"
-#include "ax_global_type.h"
-#include "AXThread.hpp"
 #include "MQTTClient.h"
-#include "AXLockQ.hpp"
-
+#include "ax_global_type.h"
 
 extern "C" {
 #include "libavcodec/avcodec.h"
@@ -44,179 +43,146 @@ extern "C" {
 }
 
 namespace boxconf {
-class IPStack
-{
+class IPStack {
 public:
-  IPStack()
-  {
-		signal(SIGPIPE, SIG_IGN);
-  }
+    IPStack() {
+        signal(SIGPIPE, SIG_IGN);
+    }
 
-  int connect(const char* hostname, int port)
-  {
-		int type = SOCK_STREAM;
-		struct sockaddr_in address;
-		int rc = -1;
-		sa_family_t family = AF_INET;
-		struct addrinfo *result = NULL;
-		struct addrinfo hints = {0, AF_UNSPEC, SOCK_STREAM, IPPROTO_TCP, 0, NULL, NULL, NULL};
+    int connect(const char* hostname, int port) {
+        int type = SOCK_STREAM;
+        struct sockaddr_in address;
+        int rc = -1;
+        sa_family_t family = AF_INET;
+        struct addrinfo* result = NULL;
+        struct addrinfo hints = {0, AF_UNSPEC, SOCK_STREAM, IPPROTO_TCP, 0, NULL, NULL, NULL};
 
-		if ((rc = getaddrinfo(hostname, NULL, &hints, &result)) == 0)
-		{
-			struct addrinfo* res = result;
+        if ((rc = getaddrinfo(hostname, NULL, &hints, &result)) == 0) {
+            struct addrinfo* res = result;
 
-			/* prefer ip4 addresses */
-			while (res)
-			{
-				if (res->ai_family == AF_INET)
-				{
-					result = res;
-					break;
-				}
-				res = res->ai_next;
-			}
+            /* prefer ip4 addresses */
+            while (res) {
+                if (res->ai_family == AF_INET) {
+                    result = res;
+                    break;
+                }
+                res = res->ai_next;
+            }
 
-			if (result->ai_family == AF_INET)
-			{
-				address.sin_port = htons(port);
-				address.sin_family = family = AF_INET;
-				address.sin_addr = ((struct sockaddr_in*)(result->ai_addr))->sin_addr;
-			}
-			else
-				rc = -1;
+            if (result->ai_family == AF_INET) {
+                address.sin_port = htons(port);
+                address.sin_family = family = AF_INET;
+                address.sin_addr = ((struct sockaddr_in*)(result->ai_addr))->sin_addr;
+            } else
+                rc = -1;
 
-			freeaddrinfo(result);
-		}
+            freeaddrinfo(result);
+        }
 
-		if (rc == 0)
-		{
-			mysock = socket(family, type, 0);
-			if (mysock != -1)
-			{
-				rc = ::connect(mysock, (struct sockaddr*)&address, sizeof(address));
-			}
-		}
+        if (rc == 0) {
+            mysock = socket(family, type, 0);
+            if (mysock != -1) {
+                rc = ::connect(mysock, (struct sockaddr*)&address, sizeof(address));
+            }
+        }
 
         return rc;
     }
 
-  // return -1 on error, or the number of bytes read
-  // which could be 0 on a read timeout
-  int read(unsigned char* buffer, int len, int timeout_ms)
-  {
-		struct timeval interval = {timeout_ms / 1000, (timeout_ms % 1000) * 1000};
-		if (interval.tv_sec < 0 || (interval.tv_sec == 0 && interval.tv_usec <= 0))
-		{
-			interval.tv_sec = 0;
-			interval.tv_usec = 100;
-		}
+    // return -1 on error, or the number of bytes read
+    // which could be 0 on a read timeout
+    int read(unsigned char* buffer, int len, int timeout_ms) {
+        struct timeval interval = {timeout_ms / 1000, (timeout_ms % 1000) * 1000};
+        if (interval.tv_sec < 0 || (interval.tv_sec == 0 && interval.tv_usec <= 0)) {
+            interval.tv_sec = 0;
+            interval.tv_usec = 100;
+        }
 
-		setsockopt(mysock, SOL_SOCKET, SO_RCVTIMEO, (char *)&interval, sizeof(struct timeval));
+        setsockopt(mysock, SOL_SOCKET, SO_RCVTIMEO, (char*)&interval, sizeof(struct timeval));
 
-		int bytes = 0;
-    int i = 0; const int max_tries = 10;
-		while (bytes < len)
-		{
-			int rc = ::recv(mysock, &buffer[bytes], (size_t)(len - bytes), 0);
-			if (rc == -1)
-			{
-        if (errno != EAGAIN && errno != EWOULDBLOCK)
-          bytes = -1;
-        break;
-			}
-			else
-				bytes += rc;
-      if (++i >= max_tries)
-        break;
-      if (rc == 0)
-        break;
-		}
-		return bytes;
-  }
+        int bytes = 0;
+        int i = 0;
+        const int max_tries = 10;
+        while (bytes < len) {
+            int rc = ::recv(mysock, &buffer[bytes], (size_t)(len - bytes), 0);
+            if (rc == -1) {
+                if (errno != EAGAIN && errno != EWOULDBLOCK) bytes = -1;
+                break;
+            } else
+                bytes += rc;
+            if (++i >= max_tries) break;
+            if (rc == 0) break;
+        }
+        return bytes;
+    }
 
-  int write(unsigned char* buffer, int len, int timeout)
-  {
-		struct timeval tv;
+    int write(unsigned char* buffer, int len, int timeout) {
+        struct timeval tv;
 
-		tv.tv_sec = 0;  /* 30 Secs Timeout */
-		tv.tv_usec = timeout * 1000;  // Not init'ing this can cause strange errors
+        tv.tv_sec = 0;                /* 30 Secs Timeout */
+        tv.tv_usec = timeout * 1000;  // Not init'ing this can cause strange errors
 
-		setsockopt(mysock, SOL_SOCKET, SO_SNDTIMEO, (char *)&tv,sizeof(struct timeval));
-		int	rc = ::write(mysock, buffer, len);
-		//printf("write rc %d\n", rc);
-		return rc;
-  }
+        setsockopt(mysock, SOL_SOCKET, SO_SNDTIMEO, (char*)&tv, sizeof(struct timeval));
+        int rc = ::write(mysock, buffer, len);
+        // printf("write rc %d\n", rc);
+        return rc;
+    }
 
-	int disconnect()
-	{
-		return ::close(mysock);
-	}
+    int disconnect() {
+        return ::close(mysock);
+    }
 
 private:
-
     int mysock;
 };
 
-class Countdown
-{
+class Countdown {
 public:
-  Countdown()
-  {
+    Countdown() {
+    }
 
-  }
+    Countdown(int ms) {
+        countdown_ms(ms);
+    }
 
-  Countdown(int ms)
-  {
-		countdown_ms(ms);
-  }
-
-
-  bool expired()
-  {
-		struct timeval now, res;
-		gettimeofday(&now, NULL);
-		timersub(&end_time, &now, &res);
-		//printf("left %d ms\n", (res.tv_sec < 0) ? 0 : res.tv_sec * 1000 + res.tv_usec / 1000);
-		//if (res.tv_sec > 0 || res.tv_usec > 0)
-		//	printf("expired %d %d\n", res.tv_sec, res.tv_usec);
+    bool expired() {
+        struct timeval now, res;
+        gettimeofday(&now, NULL);
+        timersub(&end_time, &now, &res);
+        // printf("left %d ms\n", (res.tv_sec < 0) ? 0 : res.tv_sec * 1000 + res.tv_usec / 1000);
+        // if (res.tv_sec > 0 || res.tv_usec > 0)
+        //	printf("expired %d %d\n", res.tv_sec, res.tv_usec);
         return res.tv_sec < 0 || (res.tv_sec == 0 && res.tv_usec <= 0);
-  }
+    }
 
+    void countdown_ms(int ms) {
+        struct timeval now;
+        gettimeofday(&now, NULL);
+        struct timeval interval = {ms / 1000, (ms % 1000) * 1000};
+        // printf("interval %d %d\n", interval.tv_sec, interval.tv_usec);
+        timeradd(&now, &interval, &end_time);
+    }
 
-  void countdown_ms(int ms)
-  {
-		struct timeval now;
-		gettimeofday(&now, NULL);
-		struct timeval interval = {ms / 1000, (ms % 1000) * 1000};
-		//printf("interval %d %d\n", interval.tv_sec, interval.tv_usec);
-		timeradd(&now, &interval, &end_time);
-  }
+    void countdown(int seconds) {
+        struct timeval now;
+        gettimeofday(&now, NULL);
+        struct timeval interval = {seconds, 0};
+        timeradd(&now, &interval, &end_time);
+    }
 
-
-  void countdown(int seconds)
-  {
-		struct timeval now;
-		gettimeofday(&now, NULL);
-		struct timeval interval = {seconds, 0};
-		timeradd(&now, &interval, &end_time);
-  }
-
-
-  int left_ms()
-  {
-		struct timeval now, res;
-		gettimeofday(&now, NULL);
-		timersub(&end_time, &now, &res);
-		//printf("left %d ms\n", (res.tv_sec < 0) ? 0 : res.tv_sec * 1000 + res.tv_usec / 1000);
+    int left_ms() {
+        struct timeval now, res;
+        gettimeofday(&now, NULL);
+        timersub(&end_time, &now, &res);
+        // printf("left %d ms\n", (res.tv_sec < 0) ? 0 : res.tv_sec * 1000 + res.tv_usec / 1000);
         return (res.tv_sec < 0) ? 0 : res.tv_sec * 1000 + res.tv_usec / 1000;
-  }
+    }
 
 private:
-
-	struct timeval end_time;
+    struct timeval end_time;
 };
 
-struct MemoryInfo{
+struct MemoryInfo {
     long totalMem;
     long freeMem;
     long usedMem;
@@ -225,27 +191,27 @@ struct MemoryInfo{
     long cached;
 };
 
-struct FlashInfo{
+struct FlashInfo {
     long total;
     long used;
     long free;
 };
 
-struct TpuInfo{
+struct TpuInfo {
     long total;
     long used;
     long free;
 };
 
-struct AlgoInfo{
+struct AlgoInfo {
     std::string name;
     int index;
 };
 
 enum ContrlCmd {
-  StartAlgo = 0,
-  StopAlgo = 1,
-  RemoveAlgo = 2,
+    StartAlgo = 0,
+    StopAlgo = 1,
+    RemoveAlgo = 2,
 };
 
 struct StreamCmd {
@@ -269,8 +235,8 @@ typedef struct {
     AX_U8 nChannel;
     AX_U32 nWidth;
     AX_U32 nHeight;
-	AX_CHAR szTimestamp[16];
-	AX_CHAR szImgPath[256];
+    AX_CHAR szTimestamp[16];
+    AX_CHAR szImgPath[256];
 } JPEG_HEAD_INFO_T;
 
 typedef struct _JPEG_CAPTURE_INFO_T {
@@ -307,45 +273,44 @@ typedef struct _JPEG_DATA_INFO_T {
     }
 } JPEG_DATA_INFO_T;
 
-#define MAX_BUF_LENGTH (1920*1080*3/2)
+#define MAX_BUF_LENGTH (1920 * 1080 * 3 / 2)
 typedef struct _QUEUE_T {
-	JPEG_DATA_INFO_T tJpegInfo;
-	AX_U8 *jpg_buf;
-	AX_U32 buf_length;
-	AX_U64 u64UserData; // 标识数据来源哪个通道
+    JPEG_DATA_INFO_T tJpegInfo;
+    AX_U8* jpg_buf;
+    AX_U32 buf_length;
+    AX_U64 u64UserData;  // 标识数据来源哪个通道
 } QUEUE_T;
 
-
-class MqttClient final: public IObserver {
+class MqttClient final : public IObserver {
 public:
     MqttClient() = default;
     virtual ~MqttClient(AX_VOID) = default;
 
-	AX_BOOL Init(MQTT_CONFIG_T &mqtt_config);
+    AX_BOOL Init(MQTT_CONFIG_T& mqtt_config);
     AX_BOOL DeInit(AX_VOID);
 
     AX_BOOL Start(AX_VOID);
     AX_BOOL Stop(AX_VOID);
 
-	// AX_VOID BindTransfer(CTransferHelper* pInstance);
-	virtual AX_BOOL OnRecvData(OBS_TARGET_TYPE_E eTarget, AX_U32 nGrp, AX_U32 nChn, AX_VOID* pData) override;
-	AX_BOOL OnRegisterObserver(OBS_TARGET_TYPE_E eTarget, AX_U32 nGrp, AX_U32 nChn, OBS_TRANS_ATTR_PTR pParams) override {
+    // AX_VOID BindTransfer(CTransferHelper* pInstance);
+    virtual AX_BOOL OnRecvData(OBS_TARGET_TYPE_E eTarget, AX_U32 nGrp, AX_U32 nChn, AX_VOID* pData) override;
+    AX_BOOL OnRegisterObserver(OBS_TARGET_TYPE_E eTarget, AX_U32 nGrp, AX_U32 nChn, OBS_TRANS_ATTR_PTR pParams) override {
         return AX_TRUE;
     }
 
 private:
     AX_VOID LocalWorkThread(AX_VOID* pArg);
     AX_VOID CloudWorkThread(AX_VOID* pArg);
-	AX_BOOL SaveJpgFile(QUEUE_T* jpg_info);
-	AX_VOID SendLocalAlarmMsg();
-    AX_VOID SendCloudAlarmMsg();
+    AX_BOOL CheckSpaceAndRemoveOldFiles(AX_U32 nChn);
+    AX_BOOL SaveJpgFile(QUEUE_T* jpg_info);
+    AX_VOID SendLocalAlarmMsg();
 
 protected:
-	std::unique_ptr<CAXLockQ<QUEUE_T>> local_jpeg_queue_;
+    std::unique_ptr<CAXLockQ<QUEUE_T>> local_jpeg_queue_;
 
-	std::string local_topic_;
+    std::string local_topic_;
 
     CAXThread local_work_thread_;
     CAXThread cloud_work_thread_;
 };
-};
+};  // namespace boxconf
