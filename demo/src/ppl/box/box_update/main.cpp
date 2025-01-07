@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <sys/time.h>
 #include <string>
+#include <cstdio>
 
 #include "curl.h"
 #include "cmdline.hpp"
@@ -214,34 +215,43 @@ int main(int argc, char *argv[]) {
         if (success) {
             std::string id = jsonRes["content"]["id"];
 
-            std::string package_full_name = "/opt/bin/" + package_name + ".deb";
+            std::string package_full_name = "/opt/" + package_name + ".deb";
             if (download_file(package_url.c_str(), package_full_name.c_str()) == 0) {
-                printf("\n#\n");
-                printf("#\n");
+                printf("\n");
                 printf("# File downloaded successfully.\n");
                 printf("#\n");
                 printf("#\n");
+
+                printf("# Begin backups medias.json file.\n");
+                printf("#\n");
+                printf("#\n");
+                system("/usr/bin/cp -rf /opt/aibox/medias.json /opt");
+                printf("# Finish backups medias.json file.\n");
+                printf("#\n");
+                printf("#\n");
+
                 printf("# Begin remove aibox.\n");
                 printf("#\n");
                 printf("#\n");
-
                 system("/usr/bin/dpkg -r aibox");
-
-                printf("#\n");
-                printf("#\n");
                 printf("# Finish remove aibox.\n");
                 printf("#\n");
                 printf("#\n");
+
                 printf("# Begin install aibox.\n");
                 printf("#\n");
                 printf("#\n");
-
                 std::string cmd = "/usr/bin/dpkg -i " + package_full_name;
                 system(cmd.c_str());
-
-                printf("#\n");
-                printf("#\n");
                 printf("# Finish install aibox.\n");
+                printf("#\n");
+                printf("#\n");
+
+                printf("# Begin update medias.json file.\n");
+                printf("#\n");
+                printf("#\n");
+                system("/usr/bin/cp -rf /opt/medias.json /opt/aibox");
+                printf("# Finish update medias.json file.\n");
                 printf("#\n");
                 printf("#\n");
 
@@ -253,7 +263,12 @@ int main(int argc, char *argv[]) {
                            {"upgradeStatus", 1}};
                 params = message.dump();
                 res = http_post_request(url, header, params, 5000);
-                printf("response: %s", res.c_str());
+                printf("response: %s.\n", res.c_str());
+
+                // remove file
+                if (std::remove(package_full_name.c_str()) == 0) {
+                    printf("remove file [%s] success.\n", package_full_name.c_str());
+                }
 
             } else {
                 printf("# Failed to download file.\n");

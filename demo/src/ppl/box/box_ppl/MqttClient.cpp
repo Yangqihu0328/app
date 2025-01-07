@@ -34,7 +34,7 @@ namespace boxconf {
 
 #define ALARM_IMG_PATH "ZLMediaKit/www/alarm"
 
-#define AI_BOX_VERSION "1.0.9"
+#define AI_BOX_VERSION "1.0.12"
 
 // const std::string SERVER_URL = "http://192.168.0.196:8010";
 
