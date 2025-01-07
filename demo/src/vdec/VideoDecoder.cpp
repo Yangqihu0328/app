@@ -678,7 +678,7 @@ AX_BOOL CVideoDecoder::CreateDecoder(AX_VDEC_GRP vdGrp, const VDEC_GRP_INFO_T& s
     /* let SDK copy input stream buffer */
     stGrpAttr.bSkipSdkStreamPool = AX_FALSE;
 
-    LOG_M_D(VDEC, "create vdGrp %d: codec %d, %dx%d, input mode %d, stream buf size 0x%x, private pool %d", vdGrp, stGrpAttr.enCodecType,
+    LOG_M_C(VDEC, "create vdGrp %d: codec %d, %dx%d, input mode %d, stream buf size 0x%x, private pool %d", vdGrp, stGrpAttr.enCodecType,
             stGrpAttr.u32MaxPicWidth, stGrpAttr.u32MaxPicHeight, stGrpAttr.enInputMode, stGrpAttr.u32StreamBufSize,
             stGrpAttr.bSdkAutoFramePool);
 
@@ -872,7 +872,8 @@ AX_BOOL CVideoDecoder::Send(AX_VDEC_GRP vdGrp, const AX_U8* pData, AX_U32 nLen, 
             m_arrGrpInfo[vdGrp].bActive = AX_FALSE;
 #endif
 
-            LOG_M_W(VDEC, "stream %d is changed, vdGrp %d is destoryed", vdGrp, vdGrp);
+            // 视频源分辨率大于box.conf的最大宽高也会报这个错误
+            LOG_M_E(VDEC, "stream %d is changed, vdGrp %d is destoryed", vdGrp, vdGrp);
 
         } else {
             LOG_M_E(VDEC, "AX_VDEC_SendStream(vdGrp %d) fail, ret = 0x%x", vdGrp, ret);

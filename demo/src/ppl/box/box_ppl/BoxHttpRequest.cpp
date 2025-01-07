@@ -95,7 +95,7 @@ std::string BoxHttpRequest::Send(const std::string& method, const std::string& u
     return response;
 }
 
-void uploadRequest(const std::string& tenantid, const std::string& url, const std::string& host, const std::string& path, std::string& response) {
+void uploadRequest(const std::string& tenantid, const std::string& url, const std::string& path, std::string& response) {
     CURL* curl;
     CURLcode res;
     curl = curl_easy_init();
@@ -109,7 +109,6 @@ void uploadRequest(const std::string& tenantid, const std::string& url, const st
         // 设置请求头
         struct curl_slist* headers = NULL;
         headers = curl_slist_append(headers, "Accept: */*");
-        headers = curl_slist_append(headers, host.c_str());
         headers = curl_slist_append(headers, "Connection: keep-alive");
         headers =
          curl_slist_append(headers, "Content-Type: multipart/form-data; boundary=--------------------------667840143398521661629613");
@@ -144,11 +143,11 @@ void uploadRequest(const std::string& tenantid, const std::string& url, const st
     curl_easy_cleanup(curl);
 }
 
-std::string BoxHttpRequest::UploadFile(const std::string& tenantid, const std::string& url, const std::string& host, const std::string& path) {
+std::string BoxHttpRequest::UploadFile(const std::string& tenantid, const std::string& url, const std::string& path) {
     std::string response;
 
     // 创建一个线程来发送HTTP请求
-    std::thread thread_(std::bind(&uploadRequest, tenantid, url, host, path, std::ref(response)));
+    std::thread thread_(std::bind(&uploadRequest, tenantid, url, path, std::ref(response)));
 
     // wait thread exit
     if (thread_.joinable()) {
