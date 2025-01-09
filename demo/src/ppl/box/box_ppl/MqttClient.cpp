@@ -1848,27 +1848,6 @@ AX_VOID MqttClient::SendLocalAlarmMsg() {
                 }
             }
 
-            if (isLogin) {
-                json child = {
-                    {"type", "alarmMsg"},
-                    {"taskName", mediasMap[nChn].taskInfo.szTaskName},
-                    {"Time", currentTimeStr},
-                    {"pushStatus", "等待重试"},
-                    {"alarmMsg", modelWarning},
-                    {"alarmType", modelWarning},
-                    {"alarmId", nAlgoType},
-                    {"mediaUrl", mediasMap[nChn].szMediaUrl},
-                    {"mediaName", mediasMap[nChn].szMediaName},
-                    {"jpgPath", jpg_info.tJpegInfo.tCaptureInfo.tHeaderInfo.szImgPath},
-                };
-                json root;
-                root["result"] = 0;
-                root["msg"] = "操作成功";
-                root["data"] = child;
-                std::string payload = root.dump();
-                SendMsg(payload.c_str(), payload.size(), true);
-            }
-
             // 播放声音
             AX_CHAR AudioFile[128] = {0};
             sprintf(AudioFile, "%saudio/%d.wav", GetExecPath().c_str(), nAlgoType);
@@ -1922,6 +1901,27 @@ AX_VOID MqttClient::SendLocalAlarmMsg() {
                             res = BoxHttpRequest::Send("post", url, "Content-Type: application/json;", params, 5000);
                             LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
                             LOG_M_C(MQTT_CLIENT, "------------------------------");
+
+                            if (isLogin) {
+                                json child = {
+                                    {"type", "alarmMsg"},
+                                    {"taskName", mediasMap[nChn].taskInfo.szTaskName},
+                                    {"Time", currentTimeStr},
+                                    {"pushStatus", "上传成功"},
+                                    {"alarmMsg", modelWarning},
+                                    {"alarmType", modelWarning},
+                                    {"alarmId", nAlgoType},
+                                    {"mediaUrl", mediasMap[nChn].szMediaUrl},
+                                    {"mediaName", mediasMap[nChn].szMediaName},
+                                    {"jpgPath", jpg_info.tJpegInfo.tCaptureInfo.tHeaderInfo.szImgPath},
+                                };
+                                json root;
+                                root["result"] = 0;
+                                root["msg"] = "操作成功";
+                                root["data"] = child;
+                                std::string payload = root.dump();
+                                SendMsg(payload.c_str(), payload.size(), true);
+                            }
                         }
                     }
                 } catch (const nlohmann::json::parse_error &e) {
