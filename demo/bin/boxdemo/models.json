@@ -1,5 +1,5 @@
 {
-    "count": 3,
+    "count": 6,
     "models":[
         {
             "id": 0,
@@ -43,7 +43,7 @@
         },
         {
             "id": 5,
-            "path": "./models/fs20241213npu1.model",
+            "path": "./models/fs20241231npu1.model",
             "name": "烟火识别",
             "desc": "烟火识别",
             "warning": "识别到烟火",

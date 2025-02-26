@@ -34,7 +34,7 @@ namespace boxconf {
 
 #define ALARM_IMG_PATH "ZLMediaKit/www/alarm"
 
-#define AI_BOX_VERSION "1.0.12"
+#define AI_BOX_VERSION "1.0.14"
 
 // const std::string SERVER_URL = "http://192.168.0.196:8010";
 
@@ -1143,7 +1143,7 @@ static AX_BOOL SartLocalPreview(AX_U32 id) {
         httplib::Result result = httpclient.Get(api);
         if (result == nullptr) {
             LOG_M_E(MQTT_CLIENT, "=========================================");
-            LOG_M_E(MQTT_CLIENT, "http post add stream proxy failed.");
+            LOG_M_E(MQTT_CLIENT, "http post [%s] add stream proxy failed.", api);
             LOG_M_E(MQTT_CLIENT, "=========================================");
 
             AX_CHAR szKey[32] = {0};
@@ -1856,6 +1856,27 @@ AX_VOID MqttClient::SendLocalAlarmMsg() {
                 a_builder->playAudio(AudioFile);
             }
 
+            if (isLogin) {
+                json child = {
+                    {"type", "alarmMsg"},
+                    {"taskName", mediasMap[nChn].taskInfo.szTaskName},
+                    {"Time", currentTimeStr},
+                    {"pushStatus", "上传成功"},
+                    {"alarmMsg", modelWarning},
+                    {"alarmType", modelWarning},
+                    {"alarmId", nAlgoType},
+                    {"mediaUrl", mediasMap[nChn].szMediaUrl},
+                    {"mediaName", mediasMap[nChn].szMediaName},
+                    {"jpgPath", jpg_info.tJpegInfo.tCaptureInfo.tHeaderInfo.szImgPath},
+                };
+                json root;
+                root["result"] = 0;
+                root["msg"] = "操作成功";
+                root["data"] = child;
+                std::string payload = root.dump();
+                SendMsg(payload.c_str(), payload.size(), true);
+            }
+
             // 短信告警推送
             if (cloud_mqtt_connected_) {
                 // 上传图片
@@ -1886,6 +1907,7 @@ AX_VOID MqttClient::SendLocalAlarmMsg() {
                                 {"alarmDescribe", modelWarning},
                                 {"alarmTime", currentTimeStr},
                                 {"channelName", mediasMap[nChn].szMediaName},
+                                {"channelId", mediasMap[nChn].szMediaWebId},
                                 {"deviceSymbol", cloud_topic_},
                                 {"flowStatus", "1"},
                                 {"imageData", imageData},
@@ -1901,27 +1923,6 @@ AX_VOID MqttClient::SendLocalAlarmMsg() {
                             res = BoxHttpRequest::Send("post", url, "Content-Type: application/json;", params, 5000);
                             LOG_M_C(MQTT_CLIENT, "response: %s", res.c_str());
                             LOG_M_C(MQTT_CLIENT, "------------------------------");
-
-                            if (isLogin) {
-                                json child = {
-                                    {"type", "alarmMsg"},
-                                    {"taskName", mediasMap[nChn].taskInfo.szTaskName},
-                                    {"Time", currentTimeStr},
-                                    {"pushStatus", "上传成功"},
-                                    {"alarmMsg", modelWarning},
-                                    {"alarmType", modelWarning},
-                                    {"alarmId", nAlgoType},
-                                    {"mediaUrl", mediasMap[nChn].szMediaUrl},
-                                    {"mediaName", mediasMap[nChn].szMediaName},
-                                    {"jpgPath", jpg_info.tJpegInfo.tCaptureInfo.tHeaderInfo.szImgPath},
-                                };
-                                json root;
-                                root["result"] = 0;
-                                root["msg"] = "操作成功";
-                                root["data"] = child;
-                                std::string payload = root.dump();
-                                SendMsg(payload.c_str(), payload.size(), true);
-                            }
                         }
                     }
                 } catch (const nlohmann::json::parse_error &e) {

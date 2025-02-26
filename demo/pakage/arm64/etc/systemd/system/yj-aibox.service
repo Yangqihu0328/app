@@ -5,9 +5,7 @@ After=rc-local.service
 [Service]
 Type=simple
 WorkingDirectory=/opt/aibox
-ExecStart=/bin/sh -ec '\
-    export LD_LIBRARY_PATH="/usr/local/lib:/usr/lib:/opt/lib:/soc/lib:/opt/aibox"; \
-    /opt/aibox/boxdemo'
+ExecStart=/opt/aibox/boxdemo
 ExecStop=/bin/kill -s TERM $MAINPID
 TimeoutStartSec=0
 RestartSec=5

@@ -619,7 +619,6 @@ AX_BOOL CBoxBuilder::InitMqtt() {
     return AX_TRUE;
 }
 
-#ifdef __USE_AX_ALGO
 AX_BOOL CBoxBuilder::InitDetector(const DETECT_CONFIG_T &detectConfig) {
     LOG_M_C(BOX, "InitDetector +++++.");
 
@@ -665,53 +664,6 @@ AX_BOOL CBoxBuilder::InitDetector(const DETECT_CONFIG_T &detectConfig) {
 
     return AX_TRUE;
 }
-#else
-AX_BOOL CBoxBuilder::InitDetector(const DETECT_CONFIG_T &detectConfig) {
-    LOG_M_C(BOX, "InitDetector +++++.");
-
-    m_detect = make_unique<CDetector>();
-    if (!m_detect) {
-        LOG_M_E(BOX, "%s: create detector instance fail", __func__);
-        return AX_FALSE;
-    }
-
-    AX_U32 nMediaCnt = 0;
-    STREAM_CONFIG_T streamConfig = CBoxConfig::GetInstance()->GetStreamConfig();
-    std::vector<MEDIA_INFO_T> mediasMap = CBoxMediaParser::GetInstance()->GetMediasMap(&nMediaCnt, streamConfig.strMediaPath);
-
-    DETECTOR_ATTR_T tDetectAttr;
-    tDetectAttr.nGrpCount = m_nDecodeGrpCount;
-    tDetectAttr.nSkipRate = detectConfig.nSkipRate;
-    tDetectAttr.nW = detectConfig.nW;
-    tDetectAttr.nH = detectConfig.nH;
-    tDetectAttr.nDepth = detectConfig.nDepth * m_nDecodeGrpCount;
-    tDetectAttr.strModelPath = detectConfig.strModelPath;
-    tDetectAttr.nChannelNum = AX_MIN(m_nDecodeGrpCount, DETECTOR_MAX_CHN_NUM);
-    for (AX_U32 i = 0; i < tDetectAttr.nChannelNum; ++i) {
-        for (AX_U32 j = 0; j < ALGO_MAX_NUM; j++) {
-            tDetectAttr.tChnAttr[i].nPPL[j] = 0;
-            if (j < mediasMap[i].taskInfo.vAlgo.size()) {
-                tDetectAttr.tChnAttr[i].nPPL[j] = mediasMap[i].taskInfo.vAlgo[j];
-            }
-        }
-        tDetectAttr.tChnAttr[i].nVNPU = 1;
-        tDetectAttr.tChnAttr[i].bTrackEnable = AX_TRUE;
-    }
-    if (!m_detect->Init(tDetectAttr, mediasMap)) {
-        return AX_FALSE;
-    }
-
-    m_detectObserver = CObserverMaker::CreateObserver<CDetectObserver>(m_detect.get(), DETECT_CHN);
-    if (!m_detectObserver) {
-        LOG_M_E(BOX, "%s: create detect observer fail", __func__);
-        return AX_FALSE;
-    }
-
-    LOG_M_C(BOX, "InitDetector -----.");
-
-    return AX_TRUE;
-}
-#endif
 
 AX_BOOL CBoxBuilder::InitDecoder(const STREAM_CONFIG_T &streamConfig) {
     LOG_M_C(BOX, "InitDecoder +++++.");
